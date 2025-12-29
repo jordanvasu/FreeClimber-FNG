@@ -9,10 +9,10 @@ tags:
     orcid: 0009-0001-3178-4229
     affiliation: 1
   - name: Richard E. Hartman
-  - orcid: ==PLACEHOLDER==
-  - affiliation: 1 (?)
+  - orcid: 0000-0001-9235-3169
+  - affiliation: 1
 affiliations:
-  - name: Loma Linda University, Hartman Behavioral Neuroscience Laboratory
+  - name: Loma Linda University, School of Behavioral Health, Department of Psychology
     index: 1
 date: 2025-12-27
 bibliography: paper.bib
@@ -20,20 +20,20 @@ bibliography: paper.bib
 
 Negative geotaxis (climbing) assays in *Drosophila melanogaster* are widely used to classify motor performance and subsequent disruption by age, traumatic brain injury, genetic perturbation, or pharmacological manipulation. The open-source *FreeClimber* platform automates extraction of climbing velocity from video recordings using background subtraction, particle tracking, and local linear regression on vial-wise mean vertical position traces of *Drosophila melanogaster* [@spierer2021freeclimber].
 
- Investigators additionally score failed negative geotaxis (FNG) events. FNG is defined as an event in which a fly climbs but then loses footing and falls within the assay window. FNG is typically hand-scored, which is time-consuming, rater-dependent, and difficult to reproduce.
+ Investigators can additionally score failed negative geotaxis (FNG) events. FNG is defined as an event in which a fly climbs but then loses footing and falls within the assay window. FNG is typically hand-scored, which is time-consuming, rater-dependent, and difficult to reproduce.
 
 *FreeClimber-FNG* is a Python extension to *FreeClimber* that adds automated detection of FNG events and computation of fall distance using the same frame-resolved position data already produced by *FreeClimber*. The extension runs automatically during the standard pipeline, requires no GUI changes, and yields machine-readable `.fng.csv` output suitable for statistical analysis. This tool provides a reproducible, scriptable alternative to manual FNG scoring.
 
 # Statement of Need
 
-*Drosophila* climbing assays remain a central behavioral measure in neuroscience  and aging research due to their simplicity, experimental flexibility, and sensitivity to subtle motor impairments [@gargano2005ring]. Laboratories report both velocity metrics and the presence of FNG events, as falls may classify motor discoordination, intoxication, fatigue, or insult related deficit. However:
+*Drosophila* climbing assays remain a central behavioral measure in neuroscience  and aging research due to their simplicity, experimental flexibility, and sensitivity to subtle motor impairments [@gargano2005ring]. Laboratories may choose to report the presence of FNG events in addition to the standard velocity / height metrics, as falls may characterize motor discoordination, intoxication, fatigue, or insult related deficit. However:
 
 1. No commonly used open-source tool automates FNG detection
 2. Most laboratories rely on manual review of videos
 3. Scoring is difficult to standardize across raters
 4. Results are not easily auditable or reproducible
 
-*FreeClimber-FNG* addresses this gap by integrating directly with *FreeClimber’s* existing data pipeline and by adding an analysis layer for identifying climb–fall sequences and quantifying fall distance. Researchers who already use *FreeClimber* can therefore obtain both velocity and fall-behavior measures from the same recorded video without additional steps
+*FreeClimber-FNG* addresses this gap by integrating directly with *FreeClimber’s* existing data pipeline and by adding an analysis layer for identifying climb–fall sequences and quantifying fall distance. Researchers who already use *FreeClimber* can therefore obtain both velocity / height and fall-behavior measures from the same recorded video without additional steps.
 
 # Software Description
 
