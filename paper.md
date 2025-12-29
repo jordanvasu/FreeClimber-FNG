@@ -1,3 +1,4 @@
+---
 title: FreeClimber-FNG: Automated Detection of Failed Negative Geotaxis and Fall Distance in Drosophila Climbing Assays
 tags:
   - Python
@@ -7,15 +8,16 @@ tags:
 authors:
   - name: Jordan Vasu
     orcid: 0009-0001-3178-4229
-    affiliation: 1
+    affiliation: "1"
   - name: Richard E. Hartman
     orcid: 0000-0001-9235-3169
-    affiliation: 1
+    affiliation: "1"
 affiliations:
   - name: Loma Linda University, School of Behavioral Health, Department of Psychology
     index: 1
 date: 27 December 2025
 bibliography: paper.bib
+---
 # Summary
 
 Negative geotaxis (climbing) assays in *Drosophila melanogaster* are widely used to classify motor performance and subsequent disruption by age, traumatic brain injury, genetic perturbation, or pharmacological manipulation. The open-source *FreeClimber* platform automates extraction of climbing velocity from video recordings using background subtraction, particle tracking, and local linear regression on vial-wise mean vertical position traces of *Drosophila melanogaster* [@spierer2021freeclimber].
