@@ -4,17 +4,17 @@ tags:
   - Drosophila
   - behavioral analysis
   - reproducible research
-- authors:
+authors:
   - name: Jordan Vasu
     orcid: 0009-0001-3178-4229
     affiliation: 1
   - name: Richard E. Hartman
-  - orcid: 0000-0001-9235-3169
-  - affiliation: 1
+    orcid: 0000-0001-9235-3169
+    affiliation: 1
 affiliations:
   - name: Loma Linda University, School of Behavioral Health, Department of Psychology
     index: 1
-date: 2025-12-27
+date: 27 December 2025
 bibliography: paper.bib
 # Summary
 
@@ -113,7 +113,7 @@ This version of the software is archived on Zenodo at: [![DOI](https://zenodo.or
 
 # Acknowledgements
 
-This project builds on the original FreeClimber platform by Spierer and colleagues [@spierer2021freeclimber]. I thank Adam Spierer for making the FreeClimber codebase openly accessible.
+This project builds on the original FreeClimber platform by Spierer and colleagues [@spierer2021freeclimber]. I thank Adam Spierer for making the FreeClimber codebase openly accessible. The authors declare no conflicts of interest and received no external funding for this work
 
 # References
 
