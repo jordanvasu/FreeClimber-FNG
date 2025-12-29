@@ -117,24 +117,3 @@ This project builds on the original FreeClimber platform by Spierer and colleagu
 
 # References
 
-@article{spierer2021freeclimber,
-  title={FreeClimber: automated quantification of climbing performance in Drosophila},
-  author={Spierer, Adam N. and Yoon, Daniel and Zhu, Cynthia T. and Rand, David M.},
-  journal={Journal of Experimental Biology},
-  volume={224},
-  number={3},
-  pages={jeb229377},
-  year={2021},
-  doi={10.1242/jeb.229377}
-}
-
-@article{gargano2005ring,
-  title={Rapid iterative negative geotaxis (RING): a new method for assessing age-related locomotor decline in Drosophila},
-  author={Gargano, John W. and Martin, Ingo and Bhandari, Pratibha and Grotewiel, Michael S.},
-  journal={Experimental Gerontology},
-  volume={40},
-  number={5},
-  pages={386--395},
-  year={2005},
-  doi={10.1016/j.exger.2005.02.005}
-}
