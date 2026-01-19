@@ -122,7 +122,8 @@ Thresholds, smoothing windows, and event-gap parameters were tuned until automat
 - **Operating Systems:** Any system supported by FreeClimber (Windows, macOS, Linux).  
 - **Dependencies:** Python ≥3.6
 
-This version of the software is archived on Zenodo at: [![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.17577324.svg)](https://doi.org/10.5281/zenodo.17577324)
+This version of the software is archived on Zenodo: https://doi.org/10.5281/zenodo.17577324
+
 
 # Acknowledgements
 
