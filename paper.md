@@ -38,6 +38,16 @@ Negative geotaxis (climbing) assays in *Drosophila melanogaster* are widely used
 
 *FreeClimber-FNG* addresses this gap by integrating directly with *FreeClimber’s* existing data pipeline and by adding an analysis layer for identifying climb–fall sequences and quantifying fall distance. Researchers who already use *FreeClimber* can therefore obtain both velocity / height and fall-behavior measures from the same recorded video without additional steps.
 
+# Research Impact Statement
+
+Automated detection of failed negative geotaxis events enables researchers to quantify motor instability and recovery behavior in Drosophila assays without manual video scoring. By providing standardized, machine-readable outputs for fall events and fall distance, FreeClimber-FNG improves reproducibility and scalability in behavioral analysis workflows. This extension supports ongoing and future research into aging, neurodegeneration, traumatic brain injury, and pharmacological effects on locomotor coordination.
+
+
+# Software Design
+
+FreeClimber-FNG is designed as a modular extension to the existing FreeClimber analysis pipeline. The software reuses FreeClimber’s established video processing, particle detection, and filtering stages, and introduces additional analysis logic that operates on the filtered, per-frame position data. This design minimizes duplication, preserves backward compatibility, and allows users to obtain both climbing velocity and fall-related metrics from the same tracked data without modifying upstream components.
+
+
 # Software Description
 
 ## Integration with *FreeClimber*
@@ -117,6 +127,11 @@ This version of the software is archived on Zenodo at: [![DOI](https://zenodo.or
 # Acknowledgements
 
 This project builds on the original FreeClimber platform by Spierer and colleagues [@spierer2021freeclimber]. I thank Adam Spierer for making the FreeClimber codebase openly accessible. The authors declare no conflicts of interest and received no external funding for this work
+
+# AI Usage Disclosure
+
+The software was developed and validated by the authors. General-purpose development tools were occasionally used to assist with debugging or refactoring during development. The algorithm design, parameter selection, validation against experimental data, and integration into the FreeClimber pipeline were performed by the research team.
+
 
 # References
 
