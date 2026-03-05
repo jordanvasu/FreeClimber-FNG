@@ -117,7 +117,7 @@ Thresholds, smoothing windows, and event-gap parameters were tuned until automat
 
 To assess agreement between FreeClimber-FNG and manual scoring, a Bland-Altman analysis was conducted on 120 wild-type *Drosophila melanogaster* across three trials each (387 fly-trial observations). Three independent raters scored FNG events from the same videos; hand scores were collapsed across raters and compared to software-detected counts. The mean difference between hand and program scores was approximately zero, with 95% limits of agreement of −1.14 to +0.91 FNG events, indicating that automated detection deviated from manual scoring by less than one event in either direction for the large majority of observations. Discrepancies were concentrated at higher mean event counts, consistent with expected boundary-case disagreement. These results support the use of FreeClimber-FNG as a reproducible alternative to manual scoring in wild-type assays. Validation under additional experimental conditions, including traumatic brain injury and pharmacological manipulation, is ongoing and will be reported in subsequent work.
 
-![Bland-Altman plot of agreement between hand scoring and FreeClimber-FNG across 387 wild-type fly-trial observations.](figures/freeclimber_fng_bland_altman.png)
+![Bland-Altman plot of agreement between hand scoring and FreeClimber-FNG across 387 wild-type fly-trial observations.](freeclimber_fng_bland_altman.png)
 
 # Availability
 
