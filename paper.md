@@ -40,8 +40,19 @@ Negative geotaxis (climbing) assays in *Drosophila melanogaster* are widely used
 
 # Research Impact Statement
 
-Automated detection of failed negative geotaxis events enables researchers to quantify motor instability and recovery behavior in Drosophila assays without manual video scoring. By providing standardized, machine-readable outputs for fall events and fall distance, FreeClimber-FNG improves reproducibility and scalability in behavioral analysis workflows. This extension supports ongoing and future research into aging, neurodegeneration, traumatic brain injury, and pharmacological effects on locomotor coordination.
+FreeClimber-FNG is archived as a citable software deposit on Zenodo
+[@vasu2025freeclimberfng], providing a versioned, DOI-linked release
+suitable for citation in methods sections. The software is currently
+in active use in our laboratory, where it has been applied to climbing
+assays across wild-type, traumatic brain injury, and pharmacological
+manipulation conditions. Validation manuscripts reporting these
+datasets are in preparation and will cite the software directly upon
+posting as preprints.
 
+FreeClimber, the upstream platform this tool extends, has been adopted
+across multiple laboratories and published in a peer-reviewed methods
+paper [@spierer2021freeclimber], providing an established ecosystem
+into which FreeClimber-FNG integrates.
 
 # Software Design
 
@@ -121,13 +132,14 @@ To assess agreement between FreeClimber-FNG and manual scoring, a Bland-Altman a
 
 # Availability
 
-- **Source Code:** <https://github.com/jordanvasu/FreeClimber-FNG-Adaptation-Vasu-2025->  
-- **License:** MIT  
-- **Operating Systems:** Any system supported by FreeClimber (Windows, macOS, Linux).  
+# Availability
+
+- **Source Code:** <https://github.com/jordanvasu/FreeClimber-FNG>
+- **License:** MIT
+- **Operating Systems:** Any system supported by FreeClimber (Windows, macOS, Linux).
 - **Dependencies:** Python ≥3.6
 
-This version of the software is archived on Zenodo: https://doi.org/10.5281/zenodo.17577324
-
+This version of the software is archived on Zenodo [@vasu2025freeclimberfng].
 
 # Acknowledgements
 
