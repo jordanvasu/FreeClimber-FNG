@@ -907,25 +907,38 @@ class detector(object):
                            smooth_window=None,
                            climb_thresh=None,
                            fall_thresh=None,
-                           min_gap=None):
+                           min_gap=None,
+                           recovery_thresh=None):
         """
         Detect 'climb–then–fall' events in one vial's height trace.
 
         All thresholds operate on 0–1 normalized signal.
         Returns a list of dicts with:
-          - frame_peak        : video frame index at peak height
-          - frame_fall_start  : frame where fall is considered to start (peak)
-          - frame_fall_end    : frame of post-peak minimum within the window
-          - rise_norm         : normalized rise magnitude
-          - drop_norm         : normalized drop magnitude
-          - drop_px           : fall distance in pixels (peak - post-peak minimum)
-          - drop_cm           : fall distance in cm (if pixel_to_cm is defined)
+          - frame_peak              : video frame index at peak height
+          - frame_fall_start        : frame where fall is considered to start (peak)
+          - frame_fall_end          : frame of post-peak minimum within the window
+          - rise_norm               : normalized rise magnitude
+          - drop_norm               : normalized drop magnitude
+          - drop_px                 : fall distance in pixels (peak - post-peak minimum)
+          - drop_cm                 : fall distance in cm (if pixel_to_cm is defined)
+          - fall_duration_frames    : frames from fall start (peak) to fall end (bottom)
+          - fall_duration_sec       : fall_duration_frames / frame_rate
+          - frame_recovery          : first frame after bottom where height >= bottom + recovery_thresh;
+                                      NaN if no recovery found before the next candidate peak or trace end
+          - recovery_duration_frames: frames from fall end (bottom) to frame_recovery; NaN if not found
+          - recovery_duration_sec   : recovery_duration_frames / frame_rate; NaN if not found
         """
         # EXTREMELY PERMISSIVE DEFAULTS FOR DEBUGGING
-        smooth_window = smooth_window if smooth_window is not None else 1
-        climb_thresh  = climb_thresh  if climb_thresh  is not None else 0.0
-        fall_thresh   = fall_thresh   if fall_thresh   is not None else 0.0
-        min_gap       = min_gap       if min_gap       is not None else 1
+        smooth_window    = smooth_window    if smooth_window    is not None else 1
+        climb_thresh     = climb_thresh     if climb_thresh     is not None else 0.0
+        fall_thresh      = fall_thresh      if fall_thresh      is not None else 0.0
+        min_gap          = min_gap          if min_gap          is not None else 1
+        recovery_thresh  = recovery_thresh  if recovery_thresh  is not None else 0.05
+
+        # Frame rate for converting frame counts to seconds
+        frame_rate = float(getattr(self, 'frame_rate', 1))
+        if frame_rate <= 0:
+            frame_rate = 1.0
 
         # Smooth and keep length (centered rolling) in original units (pixels)
         s = pd.Series(series).rolling(window=max(1, int(smooth_window)),
@@ -1000,14 +1013,41 @@ class detector(object):
                 else:
                     drop_cm = np.nan
 
+                # --- Fall duration ---
+                fall_duration_frames = int(frame_index[right_idx]) - int(frame_index[p])
+                fall_duration_sec    = fall_duration_frames / frame_rate
+
+                # --- Recovery: search forward from the fall bottom ---
+                # Bound the search at the next candidate peak (proxy for next event
+                # start) or end of trace, whichever comes first.
+                next_peaks_after_p = peaks[peaks > p]
+                recovery_bound = int(next_peaks_after_p[0]) if len(next_peaks_after_p) > 0 else len(nv)
+
+                recovery_threshold_val   = nv[right_idx] + recovery_thresh
+                frame_recovery           = np.nan
+                recovery_duration_frames = np.nan
+                recovery_duration_sec    = np.nan
+
+                for i in range(right_idx + 1, recovery_bound):
+                    if nv[i] >= recovery_threshold_val:
+                        frame_recovery           = int(frame_index[i])
+                        recovery_duration_frames = frame_recovery - int(frame_index[right_idx])
+                        recovery_duration_sec    = recovery_duration_frames / frame_rate
+                        break
+
                 events.append({
-                    'frame_peak'       : int(frame_index[p]),        # actual frame number
-                    'frame_fall_start' : int(frame_index[p]),        # define start at peak
-                    'frame_fall_end'   : int(frame_index[right_idx]),
-                    'rise_norm'        : float(rise),
-                    'drop_norm'        : float(drop_norm),
-                    'drop_px'          : float(drop_px),
-                    'drop_cm'          : float(drop_cm),
+                    'frame_peak'              : int(frame_index[p]),        # actual frame number
+                    'frame_fall_start'        : int(frame_index[p]),        # define start at peak
+                    'frame_fall_end'          : int(frame_index[right_idx]),
+                    'rise_norm'               : float(rise),
+                    'drop_norm'               : float(drop_norm),
+                    'drop_px'                 : float(drop_px),
+                    'drop_cm'                 : float(drop_cm),
+                    'fall_duration_frames'    : fall_duration_frames,
+                    'fall_duration_sec'       : fall_duration_sec,
+                    'frame_recovery'          : frame_recovery,
+                    'recovery_duration_frames': recovery_duration_frames,
+                    'recovery_duration_sec'   : recovery_duration_sec,
                 })
                 last_event_frame = p
 
@@ -1031,6 +1071,11 @@ class detector(object):
           - drop_norm
           - drop_px
           - drop_cm
+          - fall_duration_frames
+          - fall_duration_sec
+          - frame_recovery
+          - recovery_duration_frames
+          - recovery_duration_sec
         """
         if not getattr(self, 'fng_enabled', True):
             self.df_fng = pd.DataFrame()
@@ -1043,12 +1088,16 @@ class detector(object):
         H = self._height_traces()
         path_fng = self.name_nosuffix + '.fng.csv'
 
+        _all_columns = [
+            'vial','event_idx',
+            'frame_peak','frame_fall_start','frame_fall_end',
+            'rise_norm','drop_norm','drop_px','drop_cm',
+            'fall_duration_frames','fall_duration_sec',
+            'frame_recovery','recovery_duration_frames','recovery_duration_sec',
+        ]
+
         if H.empty:
-            self.df_fng = pd.DataFrame(columns=[
-                'vial','event_idx',
-                'frame_peak','frame_fall_start','frame_fall_end',
-                'rise_norm','drop_norm','drop_px','drop_cm'
-            ])
+            self.df_fng = pd.DataFrame(columns=_all_columns)
             self.df_fng_counts = pd.DataFrame({
                 'vial': range(1, getattr(self, 'vials', 0) + 1),
                 'fng_count': 0
@@ -1067,28 +1116,30 @@ class detector(object):
                 climb_thresh=getattr(self, 'fng_climb_thresh', 0.10),
                 fall_thresh=getattr(self, 'fng_fall_thresh', 0.10),
                 min_gap=getattr(self, 'fng_min_gap', 5),
+                recovery_thresh=getattr(self, 'fng_recovery_thresh', 0.05),
             )
             for idx, ev in enumerate(evs, start=1):
                 records.append({
-                    'vial'            : int(vial),
-                    'event_idx'       : idx,
-                    'frame_peak'      : int(ev['frame_peak']),
-                    'frame_fall_start': int(ev['frame_fall_start']),
-                    'frame_fall_end'  : int(ev['frame_fall_end']),
-                    'rise_norm'       : round(ev['rise_norm'], 4),
-                    'drop_norm'       : round(ev['drop_norm'], 4),
-                    'drop_px'         : round(ev['drop_px'], 4),
-                    'drop_cm'         : round(ev['drop_cm'], 4),
+                    'vial'                    : int(vial),
+                    'event_idx'               : idx,
+                    'frame_peak'              : int(ev['frame_peak']),
+                    'frame_fall_start'        : int(ev['frame_fall_start']),
+                    'frame_fall_end'          : int(ev['frame_fall_end']),
+                    'rise_norm'               : round(ev['rise_norm'], 4),
+                    'drop_norm'               : round(ev['drop_norm'], 4),
+                    'drop_px'                 : round(ev['drop_px'], 4),
+                    'drop_cm'                 : round(ev['drop_cm'], 4),
+                    'fall_duration_frames'    : ev['fall_duration_frames'],
+                    'fall_duration_sec'       : round(ev['fall_duration_sec'], 4),
+                    'frame_recovery'          : ev['frame_recovery'],
+                    'recovery_duration_frames': ev['recovery_duration_frames'],
+                    'recovery_duration_sec'   : (round(ev['recovery_duration_sec'], 4)
+                                                 if not (isinstance(ev['recovery_duration_sec'], float)
+                                                         and np.isnan(ev['recovery_duration_sec']))
+                                                 else np.nan),
                 })
 
-        self.df_fng = pd.DataFrame.from_records(
-            records,
-            columns=[
-                'vial','event_idx',
-                'frame_peak','frame_fall_start','frame_fall_end',
-                'rise_norm','drop_norm','drop_px','drop_cm'
-            ]
-        )
+        self.df_fng = pd.DataFrame.from_records(records, columns=_all_columns)
 
         counts = (self.df_fng.groupby('vial').size()
                     .rename('fng_count')
