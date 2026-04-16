@@ -23,7 +23,8 @@ import matplotlib.pyplot as plt
 from matplotlib.cm import Greys_r
 
 ## Importing local module(s)
-import detector as detector
+import ast
+import detector_fng as detector
 
 class FreeClimber(object):
     def __init__(self, config_file):
@@ -55,10 +56,30 @@ class FreeClimber(object):
         ## Filter lines with '#', ' ', and carriage returns
         variables = [item.rstrip() for item in variables if not item.startswith(('#',' ','\n'))]
         
-        ## Assign variables to the detector, pass if unable to.
+        ## Recognised configuration keys (allowlist).
+        ALLOWED_KEYS = {
+            'x', 'y', 'w', 'h', 'check_frame', 'blank_0', 'blank_n',
+            'crop_0', 'crop_n', 'threshold', 'diameter', 'minmass',
+            'maxsize', 'ecc_low', 'ecc_high', 'vials', 'window',
+            'pixel_to_cm', 'frame_rate', 'vial_id_vars', 'outlier_TB',
+            'outlier_LR', 'naming_convention', 'path_project',
+            'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
+            'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
+            'fng_fall_thresh', 'fng_min_gap',
+        }
+
+        ## Assign variables to the detector using explicit key-value parsing.
         for item in variables:
-            try: exec('self.'+item)
-            except: pass
+            if '=' not in item:
+                continue
+            key, _, val_str = item.partition('=')
+            key = key.strip()
+            if key not in ALLOWED_KEYS:
+                continue
+            try:
+                setattr(self, key, ast.literal_eval(val_str.strip()))
+            except (ValueError, SyntaxError):
+                setattr(self, key, val_str.strip())
         return
 
     ## Reading file with video paths for --process_custom argument
@@ -216,7 +237,7 @@ class FreeClimber(object):
         self.slopes = concat([read_csv(item) for item in to_concat])
         
         ## Saves results.csv file to the path_project folder (specified in the configuration file)
-        self.path_result = self.path_project+'results.csv'
+        self.path_result = os.path.join(self.path_project, 'results.csv')
         print("    - Saving:", self.path_result)
         self.slopes.to_csv(self.path_result,index=False)
         return
@@ -226,11 +247,11 @@ class FreeClimber(object):
         if self.args.debug: print('FreeClimber.create_log_header')
     
         try:
-            os.mkdir(self.path_project + 'log/')
+            os.mkdir(os.path.join(self.path_project, 'log'))
         except:
             pass
-        self.path_completed = self.path_project + 'log/completed.log'
-        self.path_skipped = self.path_project + 'log/skipped.log'
+        self.path_completed = os.path.join(self.path_project, 'log', 'completed.log')
+        self.path_skipped = os.path.join(self.path_project, 'log', 'skipped.log')
         path_list,text_list = [self.path_completed,self.path_skipped],['completed','skipped']
         time_stamp = str(ctime())
                 
@@ -276,9 +297,9 @@ class FreeClimber(object):
 #         elif review != None: path = '/review_at_R_%s/review.log' % self.review_R
         
         ## Appends the video_file path to the log file
-        if ~completed:
+        if not completed:
             print('Appending to',path + ': ',file_name)
-        with open(self.path_project + '/' + path,'a') as f:
+        with open(os.path.join(self.path_project, path),'a') as f:
             print(file_name,file = f)
         f.close()
         return

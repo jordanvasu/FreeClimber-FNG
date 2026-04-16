@@ -807,11 +807,11 @@ class detector(object):
 
         ## Bin vials, conditional for vial quantity
         if vials == 1:
-            if type(bin_lines) == 'list': bin_lines = bin_lines
+            if isinstance(bin_lines, list): bin_lines = bin_lines
             else: bin_lines = [df.x.min(),df.x.max()] 
             spot_assignments = np.repeat(1,df.shape[0])
         else: ## More than 1 vial
-            if type(bin_lines) == 'list': bin_lines = bin_lines
+            if isinstance(bin_lines, list): bin_lines = bin_lines
             else: bin_lines = pd.cut(df.x,vials,include_lowest=True,retbins=True)[1]
 
             ## Assign spots to vials
@@ -931,6 +931,7 @@ class detector(object):
 
         # Candidate peaks (tops of climbs)
         peaks, _ = find_peaks(nv)
+        sv = s.values  # raw (smoothed) pixel values, same positional alignment as nv
 
         events = []
         last_event_frame = -10**9
@@ -941,22 +942,33 @@ class detector(object):
                 continue
 
             left = nv[max(0, p - w):p+1]
-            right = nv[p:min(len(nv), p + w)]
+            right_slice = nv[p:min(len(nv), p + w)]
 
-            if len(left) < 2 or len(right) < 2:
+            if len(left) < 2 or len(right_slice) < 2:
                 continue
 
             left_min  = left.min()
-            right_min = right.min()
+            right_min = right_slice.min()
 
             rise = nv[p] - left_min
             drop = nv[p] - right_min
 
             if rise >= climb_thresh and drop >= fall_thresh:
+                # Map positional indices back to original frame numbers
+                frame_peak = int(n.index[p])
+                p_end = p + int(np.argmin(right_slice))
+                frame_fall_end = int(n.index[p_end])
+                drop_px = float(sv[p] - sv[p_end])
+                drop_cm = drop_px / float(getattr(self, 'pixel_to_cm', 1.0))
+
                 events.append({
-                    'frame_peak': int(p),
+                    'frame_peak': frame_peak,
+                    'frame_fall_start': frame_peak,
+                    'frame_fall_end': frame_fall_end,
                     'rise_norm': float(rise),
                     'drop_norm': float(drop),
+                    'drop_px': round(drop_px, 2),
+                    'drop_cm': round(drop_cm, 4),
                 })
                 last_event_frame = p
 
@@ -975,9 +987,12 @@ class detector(object):
                                                'fng_count': 0})
             return
 
+        FNG_COLUMNS = ['vial','event_idx','frame_peak','frame_fall_start','frame_fall_end',
+                       'rise_norm','drop_norm','drop_px','drop_cm']
+
         H = self._height_traces()
         if H.empty:
-            self.df_fng = pd.DataFrame(columns=['vial','event_idx','frame_peak','rise_norm','drop_norm'])
+            self.df_fng = pd.DataFrame(columns=FNG_COLUMNS)
             self.df_fng_counts = pd.DataFrame({'vial': range(1, getattr(self, 'vials', 0)+1),
                                                'fng_count': 0})
             # still emit a headered csv for consistency
@@ -1001,14 +1016,15 @@ class detector(object):
                     'vial': int(vial),
                     'event_idx': idx,
                     'frame_peak': ev['frame_peak'],
+                    'frame_fall_start': ev['frame_fall_start'],
+                    'frame_fall_end': ev['frame_fall_end'],
                     'rise_norm': round(ev['rise_norm'], 4),
                     'drop_norm': round(ev['drop_norm'], 4),
+                    'drop_px': ev['drop_px'],
+                    'drop_cm': ev['drop_cm'],
                 })
 
-        self.df_fng = pd.DataFrame.from_records(
-            records,
-            columns=['vial','event_idx','frame_peak','rise_norm','drop_norm']
-        )
+        self.df_fng = pd.DataFrame.from_records(records, columns=FNG_COLUMNS)
 
         counts = (self.df_fng.groupby('vial').size()
                     .rename('fng_count')
@@ -1019,8 +1035,7 @@ class detector(object):
         # Save per-event csv
         path_fng = self.name_nosuffix + '.fng.csv'
         if self.df_fng.empty:
-            # write header only for consistency
-            pd.DataFrame(columns=['vial','event_idx','frame_peak','rise_norm','drop_norm']).to_csv(path_fng, index=False)
+            pd.DataFrame(columns=FNG_COLUMNS).to_csv(path_fng, index=False)
         else:
             self.df_fng.to_csv(path_fng, index=False)
         print('                --> Saved:', path_fng.split('/')[-1])

@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 matplotlib.use('WXAgg')
 
 ## Local imports
-from detector import detector
+from detector_fng import detector
 
 
 ## Set up wxPython application window
