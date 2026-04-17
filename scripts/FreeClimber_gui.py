@@ -7,7 +7,7 @@
 ## Purpose   : Graphical User Interface wrapper for FreeClimber
 
 ## Version number
-version = '0.4.0'
+version = '1.0.4'
 doi =  'https://doi.org/10.1242/jeb.229377' ## Link to published paper
 
 ## More universal modules
@@ -30,7 +30,7 @@ import matplotlib.pyplot as plt
 matplotlib.use('WXAgg')
 
 ## Local imports
-from detector import detector
+from detector_fng import detector
 
 
 ## Set up wxPython application window
@@ -119,7 +119,7 @@ class main_gui(wx.Frame):
         ## Enable all buttons
         button_list = ['browse_video','reload_video','test_parameters','store_parameters']
         for button in button_list:
-            exec('self.button_' + button + '.Enable(True)')
+            getattr(self, 'button_' + button).Enable(True)
 
         ## Load video
         self.load_video()
@@ -296,8 +296,11 @@ class main_gui(wx.Frame):
                 
                 ## If the fixed_ROI box is checked, handle values differently
                 if self.checkBox_fixed_ROI.GetValue():
-                    self.x1 = self.x0 + int(eval(self.input_w.GetValue()))
-                    self.y1 = self.y0 + int(eval(self.input_h.GetValue()))
+                    try:
+                        self.x1 = self.x0 + int(self.input_w.GetValue())
+                        self.y1 = self.y0 + int(self.input_h.GetValue())
+                    except ValueError:
+                        pass
                     self.rect.set_width(self.x1 - self.x0)
                     self.rect.set_height(self.y1 - self.y0)
                     self.rect.set_xy((self.x0, self.y0))
@@ -326,7 +329,7 @@ class main_gui(wx.Frame):
 
     def on_motion(self, event):
         '''If the mouse is on plot and if the mouse button is pressed, redraw ROI rectangle'''
-        if self.pressed & self.checkBox_fixed_ROI.Enabled & (not self.checkBox_fixed_ROI.GetValue()):
+        if self.pressed and self.checkBox_fixed_ROI.Enabled and (not self.checkBox_fixed_ROI.GetValue()):
             # Redraw the rectangle
             self.redraw_rect(event)
             self.update_ROIdisp()
@@ -791,26 +794,14 @@ def startup():
     Returns:
       args (list): list of arguments passed to program
     '''
-    def print_line(line,line_length):
-        '''Formats line to print'''
-        if len(line) <= line_length: string = line + '#'*(line_length-len(line))
-        else: string = line
-        print(string)
-        return
-
-    line_length = 72
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    line0 = '#'*line_length
-    line1 = '## FreeClimber v.%s ' % str(version)
-    line2 = '## Please cite: %s ' % doi
-    line3 = "## Beginning program @ %s " % str(now)
-    line4 = line0
-
-    ## Printing formated lines
+    border = '#' * 72
     print('\n')
-    for item in range(5):
-        print_line(eval('line'+str(item)),line_length)
+    print(border)
+    print('FreeClimber-FNG v%s' % version)
+    print('Built on FreeClimber (Spierer et al., 2020)')
+    print('Please cite: https://doi.org/10.5281/zenodo.17647589')
+    print('Please cite: https://doi.org/10.1242/jeb.229377')
+    print(border)
 
     args = define_argument_parser()
     return args

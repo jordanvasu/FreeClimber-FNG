@@ -9,6 +9,7 @@
 version = '0.4.0'
 publication = False
 
+import ast
 import os
 import sys
 import time
@@ -94,13 +95,32 @@ class detector(object):
             print('\n\nExiting program. No variable list loaded')
             raise SystemExit
         
-        ## Pass imported variables to the detector object 
+        ALLOWED_KEYS = {
+            'x', 'y', 'w', 'h', 'check_frame', 'blank_0', 'blank_n',
+            'crop_0', 'crop_n', 'threshold', 'diameter', 'minmass',
+            'maxsize', 'ecc_low', 'ecc_high', 'vials', 'window',
+            'pixel_to_cm', 'frame_rate', 'vial_id_vars', 'outlier_TB',
+            'outlier_LR', 'naming_convention', 'path_project',
+            'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
+            'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
+            'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
+        }
+
+        ## Pass imported variables to the detector object
         if self.debug: print('detector.load_for_gui: --------variables--------')
         for item in variables:
-            if self.debug: print('detector.load_for_gui:',item)
-            if ~item.startswith(('\s','\t','\n')):
-                try: exec('self.'+item)
-                except: print('detector.load_for_gui: !! Could not import ( %s )' % item) 
+            if self.debug: print('detector.load_for_gui:', item)
+            if not item.startswith((' ', '\t', '\n')):
+                if '=' not in item:
+                    continue
+                key, _, val_str = item.partition('=')
+                key = key.strip()
+                if key not in ALLOWED_KEYS:
+                    continue
+                try:
+                    setattr(self, key, ast.literal_eval(val_str.strip()))
+                except Exception:
+                    print('detector.load_for_gui: !! Could not import ( %s )' % item)
         return     
         
     def load_for_main(self, config_file = None):
@@ -120,15 +140,33 @@ class detector(object):
                 variables = f.readlines()
             f.close()
             
+            ALLOWED_KEYS = {
+                'x', 'y', 'w', 'h', 'check_frame', 'blank_0', 'blank_n',
+                'crop_0', 'crop_n', 'threshold', 'diameter', 'minmass',
+                'maxsize', 'ecc_low', 'ecc_high', 'vials', 'window',
+                'pixel_to_cm', 'frame_rate', 'vial_id_vars', 'outlier_TB',
+                'outlier_LR', 'naming_convention', 'path_project',
+                'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
+                'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
+                'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
+            }
+
             ## Filter, format, and import variables to detector object
             if self.debug: print('detector.load_for_main:  --------variables--------')
-            variables = [item.rstrip() for item in variables if not item.startswith(('#','\s','\t','\n'))]
+            variables = [item.rstrip() for item in variables if not item.startswith(('#', ' ', '\t', '\n'))]
 
             for item in variables:
-                if self.debug: print('detector.load_for_main:',item)
-                if ~item.startswith(('\s','\t','\n')):
-                    try: exec('self.'+item)
-                    except: print('detector.load_for_main: !! Could not import ( %s )' % item) 
+                if self.debug: print('detector.load_for_main:', item)
+                if '=' not in item:
+                    continue
+                key, _, val_str = item.partition('=')
+                key = key.strip()
+                if key not in ALLOWED_KEYS:
+                    continue
+                try:
+                    setattr(self, key, ast.literal_eval(val_str.strip()))
+                except Exception:
+                    print('detector.load_for_main: !! Could not import ( %s )' % item)
             return
 
         ## Exit program if issue with the configuration file
@@ -174,12 +212,10 @@ class detector(object):
         ## Defining final file names and destinations
         file_names = ['data','filtered','diagnostic','slope']
         file_suffixes = ['.raw.csv','.filtered.csv','.diagnostic.png','.slopes.csv']
-        for item,jtem in zip(file_names,file_suffixes):
-            var_name = 'self.path_'+item
-            file_path = ''.join([self.name_nosuffix,jtem])
-            if self.debug: print('detector.specify_paths_details: ' + var_name+"='"+file_path+"'")
-            file_path = file_path.replace("\\", "\\\\")
-            exec(var_name+"='"+file_path+"'")
+        for item, jtem in zip(file_names, file_suffixes):
+            file_path = self.name_nosuffix + jtem
+            if self.debug: print('detector.specify_paths_details: self.path_' + item + "='" + file_path + "'")
+            setattr(self, 'path_' + item, file_path)
 
         ## Project folder specific paths
         if self.path_project == None: self.path_project = os.path.join(folder,self.name + '.cfg')
@@ -208,7 +244,7 @@ class detector(object):
             self.vials = 1
         
         ## Spot diameter must be odd number
-        if ~self.diameter%2:
+        if self.diameter % 2 == 0:
             print('!! Issue with diameter: was %s, now %s' %(self.diameter,self.diameter+1))
             self.diameter += 1
             
@@ -603,7 +639,7 @@ class detector(object):
         if self.debug: print('detector.find_spots')
         ## Check diameter
         diameter = int(diameter)
-        if ~diameter % 2: diameter = diameter + 1
+        if diameter % 2 == 0: diameter = diameter + 1
     
         ## Option to silence output
         if quiet: tp.quiet()
@@ -807,11 +843,11 @@ class detector(object):
 
         ## Bin vials, conditional for vial quantity
         if vials == 1:
-            if type(bin_lines) == 'list': bin_lines = bin_lines
+            if isinstance(bin_lines, list): bin_lines = bin_lines
             else: bin_lines = [df.x.min(),df.x.max()] 
             spot_assignments = np.repeat(1,df.shape[0])
         else: ## More than 1 vial
-            if type(bin_lines) == 'list': bin_lines = bin_lines
+            if isinstance(bin_lines, list): bin_lines = bin_lines
             else: bin_lines = pd.cut(df.x,vials,include_lowest=True,retbins=True)[1]
 
             ## Assign spots to vials
@@ -931,6 +967,7 @@ class detector(object):
 
         # Candidate peaks (tops of climbs)
         peaks, _ = find_peaks(nv)
+        sv = s.values  # raw (smoothed) pixel values, same positional alignment as nv
 
         events = []
         last_event_frame = -10**9
@@ -941,24 +978,79 @@ class detector(object):
                 continue
 
             left = nv[max(0, p - w):p+1]
-            right = nv[p:min(len(nv), p + w)]
+            right_slice = nv[p:min(len(nv), p + w)]
 
-            if len(left) < 2 or len(right) < 2:
+            if len(left) < 2 or len(right_slice) < 2:
                 continue
 
             left_min  = left.min()
-            right_min = right.min()
+            right_min = right_slice.min()
 
             rise = nv[p] - left_min
             drop = nv[p] - right_min
 
             if rise >= climb_thresh and drop >= fall_thresh:
+                # Map positional indices back to original frame numbers
+                frame_peak = int(n.index[p])
+                p_end = p + int(np.argmin(right_slice))
+                frame_fall_end = int(n.index[p_end])
+                drop_px = float(sv[p] - sv[p_end])
+                drop_cm = drop_px / float(getattr(self, 'pixel_to_cm', 1.0))
+
+                # Find fall start: first frame after peak where signal drops below peak value
+                search_end = min(len(nv), p + w)
+                if p + 1 < search_end:
+                    below_idx = np.where(nv[p+1:search_end] < nv[p])[0]
+                    p_fall_start = p + 1 + int(below_idx[0]) if len(below_idx) > 0 else p + 1
+                else:
+                    p_fall_start = p
+                frame_fall_start = int(n.index[min(p_fall_start, len(n) - 1)])
+
+                # Fall duration
+                frame_rate = float(getattr(self, 'frame_rate', 1.0))
+                fall_duration_frames = frame_fall_end - frame_fall_start
+                fall_duration_sec = round(fall_duration_frames / frame_rate, 4)
+
+                # Recovery detection: first run of 3+ consecutive frame-over-frame
+                # increases in the smoothed signal after the fall end.
+                # Search is bounded by the next detected peak (or end of series).
+                next_peaks = peaks[peaks > p]
+                recovery_bound = int(next_peaks[0]) if len(next_peaks) > 0 else len(nv)
+
+                consecutive = 0
+                run_start_pos = None
+                frame_recovery_start = None
+                for i in range(p_end + 1, recovery_bound):
+                    if sv[i] > sv[i - 1]:
+                        if consecutive == 0:
+                            run_start_pos = i - 1
+                        consecutive += 1
+                        if consecutive >= 3:
+                            frame_recovery_start = int(n.index[run_start_pos])
+                            break
+                    else:
+                        consecutive = 0
+                        run_start_pos = None
+
+                if frame_recovery_start is not None:
+                    recovery_duration_sec = round(
+                        (frame_recovery_start - frame_fall_end) / frame_rate, 4)
+                else:
+                    recovery_duration_sec = float('nan')
+
                 events.append({
-                    'frame_peak': int(p),
+                    'frame_peak': frame_peak,
+                    'frame_fall_start': frame_fall_start,
+                    'frame_fall_end': frame_fall_end,
+                    'fall_duration_frames': fall_duration_frames,
+                    'fall_duration_sec': fall_duration_sec,
                     'rise_norm': float(rise),
                     'drop_norm': float(drop),
+                    'drop_px': round(drop_px, 2),
+                    'drop_cm': round(drop_cm, 4),
+                    'recovery_duration_sec': recovery_duration_sec,
                 })
-                last_event_frame = p
+                last_event_frame = p_end
 
         return events
 
@@ -975,9 +1067,13 @@ class detector(object):
                                                'fng_count': 0})
             return
 
+        FNG_COLUMNS = ['vial','event_idx','frame_peak','frame_fall_start','frame_fall_end',
+                       'fall_duration_frames','fall_duration_sec',
+                       'rise_norm','drop_norm','drop_px','drop_cm','recovery_duration_sec']
+
         H = self._height_traces()
         if H.empty:
-            self.df_fng = pd.DataFrame(columns=['vial','event_idx','frame_peak','rise_norm','drop_norm'])
+            self.df_fng = pd.DataFrame(columns=FNG_COLUMNS)
             self.df_fng_counts = pd.DataFrame({'vial': range(1, getattr(self, 'vials', 0)+1),
                                                'fng_count': 0})
             # still emit a headered csv for consistency
@@ -1001,14 +1097,20 @@ class detector(object):
                     'vial': int(vial),
                     'event_idx': idx,
                     'frame_peak': ev['frame_peak'],
+                    'frame_fall_start': ev['frame_fall_start'],
+                    'frame_fall_end': ev['frame_fall_end'],
+                    'fall_duration_frames': ev['fall_duration_frames'],
+                    'fall_duration_sec': ev['fall_duration_sec'],
                     'rise_norm': round(ev['rise_norm'], 4),
                     'drop_norm': round(ev['drop_norm'], 4),
+                    'drop_px': ev['drop_px'],
+                    'drop_cm': ev['drop_cm'],
+                    'recovery_duration_sec': ev['recovery_duration_sec'],
                 })
 
-        self.df_fng = pd.DataFrame.from_records(
-            records,
-            columns=['vial','event_idx','frame_peak','rise_norm','drop_norm']
-        )
+        self.df_fng = (pd.DataFrame.from_records(records, columns=FNG_COLUMNS)
+                       .sort_values('frame_peak')
+                       .reset_index(drop=True))
 
         counts = (self.df_fng.groupby('vial').size()
                     .rename('fng_count')
@@ -1019,8 +1121,7 @@ class detector(object):
         # Save per-event csv
         path_fng = self.name_nosuffix + '.fng.csv'
         if self.df_fng.empty:
-            # write header only for consistency
-            pd.DataFrame(columns=['vial','event_idx','frame_peak','rise_norm','drop_norm']).to_csv(path_fng, index=False)
+            pd.DataFrame(columns=FNG_COLUMNS).to_csv(path_fng, index=False)
         else:
             self.df_fng.to_csv(path_fng, index=False)
         print('                --> Saved:', path_fng.split('/')[-1])
@@ -1349,7 +1450,7 @@ class detector(object):
         except: frame = None
 
         ## Assign plotting parameters depending on which frame(s)
-        if type(frame) == int and frame in df.frame.unique():
+        if isinstance(frame, (int, np.integer)) and frame in df.frame.unique():
             df = df[(df.frame == frame)]
             alpha = .25
             title  = "Frame: %s" % frame
@@ -1359,7 +1460,7 @@ class detector(object):
             alpha = 0.01
             title = 'All x,y-points throughout video'
             ax.set_title(title)
-        elif type(frame) == int and not frame in df.frame.unique():
+        elif isinstance(frame, (int, np.integer)) and frame not in df.frame.unique():
             print('Error: input frame is not accounted for in current DataFrame')
         else:
             print("Chose a frame value in integer form, or 'None'")
