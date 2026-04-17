@@ -7,7 +7,7 @@
 ## Purpose   : Graphical User Interface wrapper for FreeClimber
 
 ## Version number
-version = '0.4.0'
+version = '1.0.4'
 doi =  'https://doi.org/10.1242/jeb.229377' ## Link to published paper
 
 ## More universal modules
@@ -794,27 +794,14 @@ def startup():
     Returns:
       args (list): list of arguments passed to program
     '''
-    def print_line(line,line_length):
-        '''Formats line to print'''
-        if len(line) <= line_length: string = line + '#'*(line_length-len(line))
-        else: string = line
-        print(string)
-        return
-
-    line_length = 72
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    line0 = '#'*line_length
-    line1 = '## FreeClimber v.%s ' % str(version)
-    line2 = '## Please cite: %s ' % doi
-    line3 = "## Beginning program @ %s " % str(now)
-    line4 = line0
-
-    ## Printing formated lines
+    border = '#' * 72
     print('\n')
-    lines = [line0, line1, line2, line3, line4]
-    for line in lines:
-        print_line(line, line_length)
+    print(border)
+    print('FreeClimber-FNG v%s' % version)
+    print('Built on FreeClimber (Spierer et al., 2020)')
+    print('Please cite: https://doi.org/10.5281/zenodo.17647589')
+    print('Please cite: https://doi.org/10.1242/jeb.229377')
+    print(border)
 
     args = define_argument_parser()
     return args

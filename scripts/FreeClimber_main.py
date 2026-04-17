@@ -8,7 +8,7 @@
 
 
 ## Version number
-version='0.4.0'
+version='1.0.4'
 doi =  'https://doi.org/10.1242/jeb.229377' ## Link to published paper
 
 ## Importing external package(s)
@@ -437,28 +437,14 @@ def check_config(args):
     
 def startup():
     '''Function prints top line and runs argument parsing function.'''
-    line_length = 72
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-    def print_line(line,line_length):
-        '''Formats line to print'''
-        if len(line) <= line_length: string = line + '#'*(line_length-len(line))
-        else: string = line
-        print(string)
-        return
-
-    ## Lines to print
-    line0 = '#'*line_length
-    line1 = '## FreeClimber v.%s ' % str(version)
-    line2 = '## Please cite: %s' % doi
-    line3 = "## Beginning program @ %s " % str(now)
-    line4 = line0
-    
-    ## Printing formated lines
+    border = '#' * 72
     print('\n')
-    lines = [line0, line1, line2, line3, line4]
-    for line in lines:
-        print_line(line, line_length)
+    print(border)
+    print('FreeClimber-FNG v%s' % version)
+    print('Built on FreeClimber (Spierer et al., 2020)')
+    print('Please cite: https://doi.org/10.5281/zenodo.17647589')
+    print('Please cite: https://doi.org/10.1242/jeb.229377')
+    print(border)
     return         
 
 def main():
