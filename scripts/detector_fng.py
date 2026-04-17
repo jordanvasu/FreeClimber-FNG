@@ -961,16 +961,60 @@ class detector(object):
                 drop_px = float(sv[p] - sv[p_end])
                 drop_cm = drop_px / float(getattr(self, 'pixel_to_cm', 1.0))
 
+                # Find fall start: first frame after peak where signal drops below peak value
+                search_end = min(len(nv), p + w)
+                if p + 1 < search_end:
+                    below_idx = np.where(nv[p+1:search_end] < nv[p])[0]
+                    p_fall_start = p + 1 + int(below_idx[0]) if len(below_idx) > 0 else p + 1
+                else:
+                    p_fall_start = p
+                frame_fall_start = int(n.index[min(p_fall_start, len(n) - 1)])
+
+                # Fall duration
+                frame_rate = float(getattr(self, 'frame_rate', 1.0))
+                fall_duration_frames = frame_fall_end - frame_fall_start
+                fall_duration_sec = round(fall_duration_frames / frame_rate, 4)
+
+                # Recovery detection: first run of 3+ consecutive frame-over-frame
+                # increases in the smoothed signal after the fall end.
+                # Search is bounded by the next detected peak (or end of series).
+                next_peaks = peaks[peaks > p]
+                recovery_bound = int(next_peaks[0]) if len(next_peaks) > 0 else len(nv)
+
+                consecutive = 0
+                run_start_pos = None
+                frame_recovery_start = None
+                for i in range(p_end + 1, recovery_bound):
+                    if sv[i] > sv[i - 1]:
+                        if consecutive == 0:
+                            run_start_pos = i - 1
+                        consecutive += 1
+                        if consecutive >= 3:
+                            frame_recovery_start = int(n.index[run_start_pos])
+                            break
+                    else:
+                        consecutive = 0
+                        run_start_pos = None
+
+                if frame_recovery_start is not None:
+                    recovery_duration_sec = round(
+                        (frame_recovery_start - frame_fall_end) / frame_rate, 4)
+                else:
+                    recovery_duration_sec = float('nan')
+
                 events.append({
                     'frame_peak': frame_peak,
-                    'frame_fall_start': frame_peak,
+                    'frame_fall_start': frame_fall_start,
                     'frame_fall_end': frame_fall_end,
+                    'fall_duration_frames': fall_duration_frames,
+                    'fall_duration_sec': fall_duration_sec,
                     'rise_norm': float(rise),
                     'drop_norm': float(drop),
                     'drop_px': round(drop_px, 2),
                     'drop_cm': round(drop_cm, 4),
+                    'recovery_duration_sec': recovery_duration_sec,
                 })
-                last_event_frame = p
+                last_event_frame = p_end
 
         return events
 
@@ -988,7 +1032,8 @@ class detector(object):
             return
 
         FNG_COLUMNS = ['vial','event_idx','frame_peak','frame_fall_start','frame_fall_end',
-                       'rise_norm','drop_norm','drop_px','drop_cm']
+                       'fall_duration_frames','fall_duration_sec',
+                       'rise_norm','drop_norm','drop_px','drop_cm','recovery_duration_sec']
 
         H = self._height_traces()
         if H.empty:
@@ -1018,13 +1063,18 @@ class detector(object):
                     'frame_peak': ev['frame_peak'],
                     'frame_fall_start': ev['frame_fall_start'],
                     'frame_fall_end': ev['frame_fall_end'],
+                    'fall_duration_frames': ev['fall_duration_frames'],
+                    'fall_duration_sec': ev['fall_duration_sec'],
                     'rise_norm': round(ev['rise_norm'], 4),
                     'drop_norm': round(ev['drop_norm'], 4),
                     'drop_px': ev['drop_px'],
                     'drop_cm': ev['drop_cm'],
+                    'recovery_duration_sec': ev['recovery_duration_sec'],
                 })
 
-        self.df_fng = pd.DataFrame.from_records(records, columns=FNG_COLUMNS)
+        self.df_fng = (pd.DataFrame.from_records(records, columns=FNG_COLUMNS)
+                       .sort_values('frame_peak')
+                       .reset_index(drop=True))
 
         counts = (self.df_fng.groupby('vial').size()
                     .rename('fng_count')
