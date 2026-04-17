@@ -65,7 +65,7 @@ class FreeClimber(object):
             'outlier_LR', 'naming_convention', 'path_project',
             'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
             'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
-            'fng_fall_thresh', 'fng_min_gap',
+            'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
         }
 
         ## Assign variables to the detector using explicit key-value parsing.
@@ -456,8 +456,9 @@ def startup():
     
     ## Printing formated lines
     print('\n')
-    for item in range(5):
-        print_line(eval('line'+str(item)),line_length)
+    lines = [line0, line1, line2, line3, line4]
+    for line in lines:
+        print_line(line, line_length)
     return         
 
 def main():

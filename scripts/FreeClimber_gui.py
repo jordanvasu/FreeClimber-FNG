@@ -119,7 +119,7 @@ class main_gui(wx.Frame):
         ## Enable all buttons
         button_list = ['browse_video','reload_video','test_parameters','store_parameters']
         for button in button_list:
-            exec('self.button_' + button + '.Enable(True)')
+            getattr(self, 'button_' + button).Enable(True)
 
         ## Load video
         self.load_video()
@@ -296,8 +296,11 @@ class main_gui(wx.Frame):
                 
                 ## If the fixed_ROI box is checked, handle values differently
                 if self.checkBox_fixed_ROI.GetValue():
-                    self.x1 = self.x0 + int(eval(self.input_w.GetValue()))
-                    self.y1 = self.y0 + int(eval(self.input_h.GetValue()))
+                    try:
+                        self.x1 = self.x0 + int(self.input_w.GetValue())
+                        self.y1 = self.y0 + int(self.input_h.GetValue())
+                    except ValueError:
+                        pass
                     self.rect.set_width(self.x1 - self.x0)
                     self.rect.set_height(self.y1 - self.y0)
                     self.rect.set_xy((self.x0, self.y0))
@@ -326,7 +329,7 @@ class main_gui(wx.Frame):
 
     def on_motion(self, event):
         '''If the mouse is on plot and if the mouse button is pressed, redraw ROI rectangle'''
-        if self.pressed & self.checkBox_fixed_ROI.Enabled & (not self.checkBox_fixed_ROI.GetValue()):
+        if self.pressed and self.checkBox_fixed_ROI.Enabled and (not self.checkBox_fixed_ROI.GetValue()):
             # Redraw the rectangle
             self.redraw_rect(event)
             self.update_ROIdisp()
@@ -809,8 +812,9 @@ def startup():
 
     ## Printing formated lines
     print('\n')
-    for item in range(5):
-        print_line(eval('line'+str(item)),line_length)
+    lines = [line0, line1, line2, line3, line4]
+    for line in lines:
+        print_line(line, line_length)
 
     args = define_argument_parser()
     return args

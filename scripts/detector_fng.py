@@ -9,6 +9,7 @@
 version = '0.4.0'
 publication = False
 
+import ast
 import os
 import sys
 import time
@@ -94,13 +95,32 @@ class detector(object):
             print('\n\nExiting program. No variable list loaded')
             raise SystemExit
         
-        ## Pass imported variables to the detector object 
+        ALLOWED_KEYS = {
+            'x', 'y', 'w', 'h', 'check_frame', 'blank_0', 'blank_n',
+            'crop_0', 'crop_n', 'threshold', 'diameter', 'minmass',
+            'maxsize', 'ecc_low', 'ecc_high', 'vials', 'window',
+            'pixel_to_cm', 'frame_rate', 'vial_id_vars', 'outlier_TB',
+            'outlier_LR', 'naming_convention', 'path_project',
+            'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
+            'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
+            'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
+        }
+
+        ## Pass imported variables to the detector object
         if self.debug: print('detector.load_for_gui: --------variables--------')
         for item in variables:
-            if self.debug: print('detector.load_for_gui:',item)
-            if ~item.startswith(('\s','\t','\n')):
-                try: exec('self.'+item)
-                except: print('detector.load_for_gui: !! Could not import ( %s )' % item) 
+            if self.debug: print('detector.load_for_gui:', item)
+            if not item.startswith((' ', '\t', '\n')):
+                if '=' not in item:
+                    continue
+                key, _, val_str = item.partition('=')
+                key = key.strip()
+                if key not in ALLOWED_KEYS:
+                    continue
+                try:
+                    setattr(self, key, ast.literal_eval(val_str.strip()))
+                except Exception:
+                    print('detector.load_for_gui: !! Could not import ( %s )' % item)
         return     
         
     def load_for_main(self, config_file = None):
@@ -120,15 +140,33 @@ class detector(object):
                 variables = f.readlines()
             f.close()
             
+            ALLOWED_KEYS = {
+                'x', 'y', 'w', 'h', 'check_frame', 'blank_0', 'blank_n',
+                'crop_0', 'crop_n', 'threshold', 'diameter', 'minmass',
+                'maxsize', 'ecc_low', 'ecc_high', 'vials', 'window',
+                'pixel_to_cm', 'frame_rate', 'vial_id_vars', 'outlier_TB',
+                'outlier_LR', 'naming_convention', 'path_project',
+                'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
+                'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
+                'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
+            }
+
             ## Filter, format, and import variables to detector object
             if self.debug: print('detector.load_for_main:  --------variables--------')
-            variables = [item.rstrip() for item in variables if not item.startswith(('#','\s','\t','\n'))]
+            variables = [item.rstrip() for item in variables if not item.startswith(('#', ' ', '\t', '\n'))]
 
             for item in variables:
-                if self.debug: print('detector.load_for_main:',item)
-                if ~item.startswith(('\s','\t','\n')):
-                    try: exec('self.'+item)
-                    except: print('detector.load_for_main: !! Could not import ( %s )' % item) 
+                if self.debug: print('detector.load_for_main:', item)
+                if '=' not in item:
+                    continue
+                key, _, val_str = item.partition('=')
+                key = key.strip()
+                if key not in ALLOWED_KEYS:
+                    continue
+                try:
+                    setattr(self, key, ast.literal_eval(val_str.strip()))
+                except Exception:
+                    print('detector.load_for_main: !! Could not import ( %s )' % item)
             return
 
         ## Exit program if issue with the configuration file
@@ -174,12 +212,10 @@ class detector(object):
         ## Defining final file names and destinations
         file_names = ['data','filtered','diagnostic','slope']
         file_suffixes = ['.raw.csv','.filtered.csv','.diagnostic.png','.slopes.csv']
-        for item,jtem in zip(file_names,file_suffixes):
-            var_name = 'self.path_'+item
-            file_path = ''.join([self.name_nosuffix,jtem])
-            if self.debug: print('detector.specify_paths_details: ' + var_name+"='"+file_path+"'")
-            file_path = file_path.replace("\\", "\\\\")
-            exec(var_name+"='"+file_path+"'")
+        for item, jtem in zip(file_names, file_suffixes):
+            file_path = self.name_nosuffix + jtem
+            if self.debug: print('detector.specify_paths_details: self.path_' + item + "='" + file_path + "'")
+            setattr(self, 'path_' + item, file_path)
 
         ## Project folder specific paths
         if self.path_project == None: self.path_project = os.path.join(folder,self.name + '.cfg')
@@ -208,7 +244,7 @@ class detector(object):
             self.vials = 1
         
         ## Spot diameter must be odd number
-        if ~self.diameter%2:
+        if self.diameter % 2 == 0:
             print('!! Issue with diameter: was %s, now %s' %(self.diameter,self.diameter+1))
             self.diameter += 1
             
@@ -603,7 +639,7 @@ class detector(object):
         if self.debug: print('detector.find_spots')
         ## Check diameter
         diameter = int(diameter)
-        if ~diameter % 2: diameter = diameter + 1
+        if diameter % 2 == 0: diameter = diameter + 1
     
         ## Option to silence output
         if quiet: tp.quiet()
@@ -1414,7 +1450,7 @@ class detector(object):
         except: frame = None
 
         ## Assign plotting parameters depending on which frame(s)
-        if type(frame) == int and frame in df.frame.unique():
+        if isinstance(frame, (int, np.integer)) and frame in df.frame.unique():
             df = df[(df.frame == frame)]
             alpha = .25
             title  = "Frame: %s" % frame
@@ -1424,7 +1460,7 @@ class detector(object):
             alpha = 0.01
             title = 'All x,y-points throughout video'
             ax.set_title(title)
-        elif type(frame) == int and not frame in df.frame.unique():
+        elif isinstance(frame, (int, np.integer)) and frame not in df.frame.unique():
             print('Error: input frame is not accounted for in current DataFrame')
         else:
             print("Chose a frame value in integer form, or 'None'")
