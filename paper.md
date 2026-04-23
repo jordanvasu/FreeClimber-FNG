@@ -101,7 +101,8 @@ The tool is written in Python and uses the same scientific stack as *FreeClimber
 - **TrackPy** for object tracking
 - **Matplotlib** for optional visualization
 
-The extension does not modify the GUI or underlying detection logic, ensuring backward compatibility. The FNG routines can also be imported independently and run on any dataset containing per-frame vial height traces.
+The extension does not modify the GUI or underlying detection logic, ensuring backward compatibility. The FNG detection method (_detect_fng_series) can be called on any detector object given a
+per-frame vial height trace.
 
 # Quality Control
 
