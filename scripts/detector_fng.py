@@ -679,7 +679,7 @@ class detector(object):
         df['y'] = df.y.round(2)
         df['t'] = [round(item/self.frame_rate,3) for item in df.frame]
         df['mass'] = df['mass'].astype(int)
-        df['size'] = df.size.round(3)
+        df['size'] = df['size'].round(3)
         df['ecc'] = df.ecc.round(3)
         df['signal'] = df.signal.round(2)
         df['raw_mass'] = df['mass'].astype(int)
@@ -977,7 +977,10 @@ class detector(object):
             if p - last_event_frame < min_gap:
                 continue
 
-            left = nv[max(0, p - w):p+1]
+            # Rise: measure from end of previous fall (or series start) to current peak.
+            # This captures the full climb regardless of how gradually the fly ascended.
+            left_start = max(0, last_event_frame + 1)
+            left = nv[left_start:p+1]
             right_slice = nv[p:min(len(nv), p + w)]
 
             if len(left) < 2 or len(right_slice) < 2:
@@ -991,9 +994,13 @@ class detector(object):
 
             if rise >= climb_thresh and drop >= fall_thresh:
                 # Map positional indices back to original frame numbers
-                frame_peak = int(n.index[p])
+                n_valid = getattr(self, 'n_frames', None)
+                _clamp = (lambda f: max(0, min(int(f), n_valid - 1))
+                          if n_valid and n_valid > 0 else int(f))
+
+                frame_peak = _clamp(n.index[p])
                 p_end = p + int(np.argmin(right_slice))
-                frame_fall_end = int(n.index[p_end])
+                frame_fall_end = _clamp(n.index[p_end])
                 drop_px = float(sv[p] - sv[p_end])
                 drop_cm = drop_px / float(getattr(self, 'pixel_to_cm', 1.0))
 
@@ -1004,7 +1011,7 @@ class detector(object):
                     p_fall_start = p + 1 + int(below_idx[0]) if len(below_idx) > 0 else p + 1
                 else:
                     p_fall_start = p
-                frame_fall_start = int(n.index[min(p_fall_start, len(n) - 1)])
+                frame_fall_start = _clamp(n.index[min(p_fall_start, len(n) - 1)])
 
                 # Fall duration
                 frame_rate = float(getattr(self, 'frame_rate', 1.0))
