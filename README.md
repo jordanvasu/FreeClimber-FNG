@@ -75,6 +75,33 @@ python FreeClimber_main.py --config_file ./example/example.cfg
 
 ---
 
+## Synthetic validation
+
+A synthetic single-fly negative geotaxis video is included in the repository for regression testing against known ground truth. The video was generated with 5 scripted fall events at peak frames 150, 280, 410, 540, and 660 in a 750-frame, 25 fps recording (30 s). Event parameters (rise magnitude, fall distance, recovery duration) are fully specified in the ground-truth CSV.
+
+All synthetic validation assets live under `tests/fixtures/synthetic_validation/`:
+
+| File | Description |
+|---|---|
+| `freeclimber_fng_validation_video.mp4` | Synthetic test video (750 frames, 25 fps) |
+| `freeclimber_fng_validation_video_ground_truth.csv` | Ground-truth fall events (5 events, peak frames 150/280/410/540/660) |
+| `freeclimber_fng_validation_video.raw.csv` | Raw TrackPy output used by the regression test |
+| `freeclimber_fng_validation_video.fng.csv` | Expected FNG output from the fixed pipeline |
+| `freeclimber_fng_test_validation_README.txt` | Full description of video parameters and detection notes |
+
+The regression test (`tests/test_fng_bounds_and_detection.py`) loads the raw CSV, runs the FNG detection pipeline, and asserts that exactly 5 events are detected with peak frames within ±5 frames of ground truth and no impossible (out-of-bounds) frame indices.
+
+**Run the regression test:**
+
+```bash
+pip install pytest numpy pandas scipy
+pytest tests/test_fng_bounds_and_detection.py -v
+```
+
+No video decoding or FFmpeg is required — the test operates on the pre-computed raw CSV.
+
+---
+
 ## Citing This Work
 
 If you use FreeClimber-FNG in your research, please cite both this tool and the original FreeClimber platform:

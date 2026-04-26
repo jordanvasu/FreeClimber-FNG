@@ -9,7 +9,7 @@ Runs against the pre-computed raw CSV from the validation video so no ffmpeg or
 TrackPy dependency is required in CI.
 
 Ground truth: 5 events, peaks at frames [150, 280, 410, 540, 660], from
-  freeclimber_fng samples/freeclimber_fng_validation_video_ground_truth.csv
+  tests/fixtures/synthetic_validation/freeclimber_fng_validation_video_ground_truth.csv
 Tolerance: ±5 frames on frame_peak.
 """
 
@@ -32,13 +32,13 @@ import detector_fng as dfng  # noqa: E402
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-_SAMPLES = os.path.join(
-    os.path.expanduser("~"),
-    "Desktop",
-    "freeclimber_fng samples",
+_FIXTURES = os.path.join(
+    os.path.dirname(__file__),
+    "fixtures",
+    "synthetic_validation",
 )
-RAW_CSV = os.path.join(_SAMPLES, "freeclimber_fng_validation_video.raw.csv")
-GT_CSV = os.path.join(_SAMPLES, "freeclimber_fng_validation_video_ground_truth.csv")
+RAW_CSV = os.path.join(_FIXTURES, "freeclimber_fng_validation_video.raw.csv")
+GT_CSV = os.path.join(_FIXTURES, "freeclimber_fng_validation_video_ground_truth.csv")
 
 N_FRAMES = 750
 GT_PEAKS = [150, 280, 410, 540, 660]
