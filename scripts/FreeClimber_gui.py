@@ -11,8 +11,10 @@ version = '1.0.4'
 doi =  'https://doi.org/10.1242/jeb.229377' ## Link to published paper
 
 ## More universal modules
+import gc
 import wx
 import os
+import psutil
 import sys
 import time
 import argparse
@@ -365,6 +367,8 @@ class main_gui(wx.Frame):
     def OnButton_testParButton(self, event):
         '''Tests the entered parameters when the `Test parameters` button is pressed'''
         if args.debug: print('main_gui.OnButton_testParButton')
+        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        print(f"[mem] OnButton_testParButton entry: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
         self.status_bar.SetStatusText("Testing parameters...",0)
 
         #Prep the parameters
@@ -397,6 +401,8 @@ class main_gui(wx.Frame):
         self.button_store_parameters.Enable(True)
         if args.debug: print('Parameter testing complete')
         self.status_bar.SetStatusText("Refine detector parameters by reloading the video, or finish optimization by pressing 'Save configuration'",0)
+        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        print(f"[mem] OnButton_testParButton exit: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
         return
 
     def OnButton_strParButton(self, event):

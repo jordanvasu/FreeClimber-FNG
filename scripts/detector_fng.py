@@ -10,7 +10,9 @@ version = '0.4.0'
 publication = False
 
 import ast
+import gc
 import os
+import psutil
 import sys
 import time
 import ffmpeg
@@ -344,7 +346,9 @@ class detector(object):
         Returns:
           clean_stack (nd-array): Cropped and grayscaled (if indicated) video as nd-array'''
         if self.debug: print('detector.crop_and_grayscale')
-    
+        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        print(f"[mem] crop_and_grayscale entry: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
+
         ## Conditionals for cropping frames and video length
         if first_frame == None: first_frame = self.crop_0
         if last_frame == None: last_frame = self.crop_n
@@ -365,6 +369,8 @@ class detector(object):
             clean_stack = video_array[first_frame:last_frame,y : y_max,x : x_max,:]
             
         if self.debug: print('detector.crop_and_grayscale: Final video array dimensions:',clean_stack.shape)
+        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        print(f"[mem] crop_and_grayscale exit: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
         return clean_stack
     
     ## Subtract background
@@ -1145,6 +1151,8 @@ class detector(object):
         Returns:
           None'''
         print('-- [ Step 1  ] Cleaning and format image stack')
+        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        print(f"[mem] step_1 entry: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
         x,y = self.x,self.y
         x_max, y_max = int(x + self.w),int(y + self.h)
         stack = self.image_stack
@@ -1182,6 +1190,8 @@ class detector(object):
         ## Subtracts background to generate null background image and spot stack
         self.spot_stack,self.background = self.subtract_background(video_array=self.clean_stack)
         if self.debug: print('detector.step_1 spot_stack and null background created')
+        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        print(f"[mem] step_1 exit: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
         return
 
 
@@ -1573,7 +1583,9 @@ class detector(object):
     def parameter_testing(self, variables, axes):
         '''Parameter testing in the GUI and done separately to account for plots with wx'''
         if self.debug: print('detector.parameter_testing')
-        
+        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        print(f"[mem] parameter_testing entry: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
+
         ## Running through the first few steps
         self.load_for_gui(variables)
         
@@ -1752,6 +1764,8 @@ class detector(object):
             label_x,label_y = 'Seconds','(cm)'
         labels = ['Mean vertical position over time','Mean y-position %s' % label_y,label_x]
         axes[2].set(title = labels[0], ylabel=labels[1],xlabel=labels[2]) 
-        axes[2].legend(frameon=False, fontsize='x-small', ncol=ncol)   
+        axes[2].legend(frameon=False, fontsize='x-small', ncol=ncol)
 
+        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
+        print(f"[mem] parameter_testing exit: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
         return
