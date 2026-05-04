@@ -1153,17 +1153,17 @@ class detector(object):
         print('-- [ Step 1  ] Cleaning and format image stack')
         _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
         print(f"[mem] step_1 entry: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
+
+        # Release large arrays from any prior run before allocating new ones so
+        # the old and new stacks do not coexist during the crop_and_grayscale call.
+        for _attr in ('clean_stack', 'spot_stack', 'background'):
+            if hasattr(self, _attr):
+                delattr(self, _attr)
+        gc.collect()
+
         x,y = self.x,self.y
         x_max, y_max = int(x + self.w),int(y + self.h)
         stack = self.image_stack
-        
-        if self.debug: print('detector.step_1 cropped and grayscale: grayscale image:', grayscale)
-        self.clean_stack = self.crop_and_grayscale(stack,
-                     y=y, y_max=y_max,
-                     x=x, x_max=x_max,
-                     first_frame=self.crop_0, 
-                     last_frame=self.crop_n,
-                     grayscale=grayscale)
 
         ## Confirm frame ranges
         self.check_variable_formats()
@@ -1586,9 +1586,12 @@ class detector(object):
         _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
         print(f"[mem] parameter_testing entry: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
 
+        ## Close any pyplot figures left open by a prior run before allocating new ones.
+        plt.close('all')
+
         ## Running through the first few steps
         self.load_for_gui(variables)
-        
+
         ## Load in video
         self.step_1(gui=True) # Crop and convert video
 

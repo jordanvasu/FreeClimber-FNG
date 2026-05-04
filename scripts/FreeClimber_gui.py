@@ -375,8 +375,10 @@ class main_gui(wx.Frame):
         variables = self.update_variables()
         self.checkBox_fixed_ROI.Enable(False)
 
-        ## Set up figure for plots
+        ## Set up figure for plots — clear() removes old axes/artists; gc.collect()
+        ## encourages immediate release of image arrays those artists held.
         self.figure.clear()
+        gc.collect()
         self.axes = [self.figure.add_subplot(231),
                      self.figure.add_subplot(232),
                      self.figure.add_subplot(233),
