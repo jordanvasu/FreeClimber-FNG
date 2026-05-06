@@ -12,7 +12,6 @@ publication = False
 import ast
 import gc
 import os
-import psutil
 import sys
 import time
 import ffmpeg
@@ -346,8 +345,6 @@ class detector(object):
         Returns:
           clean_stack (nd-array): Cropped and grayscaled (if indicated) video as nd-array'''
         if self.debug: print('detector.crop_and_grayscale')
-        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
-        print(f"[mem] crop_and_grayscale entry: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
 
         ## Conditionals for cropping frames and video length
         if first_frame == None: first_frame = self.crop_0
@@ -359,18 +356,16 @@ class detector(object):
         ## Setting only frames and ROI to grayscale
         if grayscale:
             if self.debug: print('detector.crop_and_grayscale: Converting to grayscale & cropping ROI to (%s x %s)' % (x_max-x,y_max-y))
-            ch_1 = 0.2989 * video_array[first_frame:last_frame,y : y_max,x : x_max,0]
-            ch_2 = 0.5870 * video_array[first_frame:last_frame,y : y_max,x : x_max,1]
-            ch_3 = 0.1140 * video_array[first_frame:last_frame,y : y_max,x : x_max,2]
-            clean_stack = ch_1.astype(float) + ch_2.astype(float) + ch_3.astype(float)
+            clean_stack = video_array[first_frame:last_frame,y : y_max,x : x_max,0].astype(np.float64)
+            clean_stack *= 0.2989
+            clean_stack += 0.5870 * video_array[first_frame:last_frame,y : y_max,x : x_max,1]
+            clean_stack += 0.1140 * video_array[first_frame:last_frame,y : y_max,x : x_max,2]
         
         ## Only cropping, no grayscaling
         else:
             clean_stack = video_array[first_frame:last_frame,y : y_max,x : x_max,:]
             
         if self.debug: print('detector.crop_and_grayscale: Final video array dimensions:',clean_stack.shape)
-        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
-        print(f"[mem] crop_and_grayscale exit: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
         return clean_stack
     
     ## Subtract background
@@ -1151,8 +1146,6 @@ class detector(object):
         Returns:
           None'''
         print('-- [ Step 1  ] Cleaning and format image stack')
-        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
-        print(f"[mem] step_1 entry: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
 
         # Release large arrays from any prior run before allocating new ones so
         # the old and new stacks do not coexist during the crop_and_grayscale call.
@@ -1190,8 +1183,6 @@ class detector(object):
         ## Subtracts background to generate null background image and spot stack
         self.spot_stack,self.background = self.subtract_background(video_array=self.clean_stack)
         if self.debug: print('detector.step_1 spot_stack and null background created')
-        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
-        print(f"[mem] step_1 exit: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
         return
 
 
@@ -1583,8 +1574,6 @@ class detector(object):
     def parameter_testing(self, variables, axes):
         '''Parameter testing in the GUI and done separately to account for plots with wx'''
         if self.debug: print('detector.parameter_testing')
-        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
-        print(f"[mem] parameter_testing entry: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
 
         ## Close any pyplot figures left open by a prior run before allocating new ones.
         plt.close('all')
@@ -1769,6 +1758,4 @@ class detector(object):
         axes[2].set(title = labels[0], ylabel=labels[1],xlabel=labels[2]) 
         axes[2].legend(frameon=False, fontsize='x-small', ncol=ncol)
 
-        _mem_mb = psutil.Process(os.getpid()).memory_info().rss / 1024**2
-        print(f"[mem] parameter_testing exit: {_mem_mb:.0f} MB")  # diagnostic; remove/gate before release
         return
