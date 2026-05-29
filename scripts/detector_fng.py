@@ -1168,40 +1168,60 @@ class detector(object):
     def compute_tortuosity(self):
         """
         Compute per-fly, per-bout tortuosity metrics and save the two
-        tortuosity CSV files.
+        tortuosity CSV files. Runs only in individual mode (gated by the
+        step_5 hook).
 
-        Runs only in individual mode (gated by the step_5 hook), after
-        link_trajectories() has populated 'particle' on self.df_filtered and
-        compute_fng() has populated self.df_fng. Cohort mode never reaches
-        here, so existing output is untouched.
+        Bout segmentation is INDEPENDENT of FNG events (Fix #2): this method
+        does NOT call _detect_fng_series, does NOT read self.df_fng /
+        self.fng_events, and does NOT use any FNG-derived data. Bouts are
+        detected per particle from vertical climbing velocity.
+
+        Configuration (all read via getattr with safe defaults so existing
+        .cfg files keep working unchanged):
+          tortuosity_velocity_threshold    mm/s threshold for a climbing step
+          tortuosity_bout_min_frames       minimum bout length, in frames
+          tortuosity_bout_min_displacement minimum bout net vertical
+                                           displacement, in mm
 
         Writes:
-          <video>.tortuosity_bouts.csv    one row per (vial, event_idx,
-                                          particle) bout: tortuosity,
-                                          straightness, vertical_efficiency,
-                                          mean turning angle (rad).
-          <video>.tortuosity_particle.csv one row per (vial, particle): n_bouts
-                                          and median_vertical_efficiency.
+          <video>.tortuosity_bouts.csv    one row per (vial, particle,
+                                          bout_idx): tortuosity, straightness,
+                                          vertical_efficiency, mean turning
+                                          angle (rad), plus bout duration and
+                                          path length in mm.
+          <video>.tortuosity_particle.csv one row per (vial, particle):
+                                          n_bouts and
+                                          median_vertical_efficiency.
 
-        See scripts/tortuosity.py for metric definitions, the y-convention,
-        and the bout-window convention.
+        See scripts/tortuosity.py for metric definitions and the
+        velocity-threshold bout-segmentation algorithm.
         """
         if self.debug: print('detector.compute_tortuosity')
 
         df = getattr(self, 'df_filtered', None)
-        df_fng = getattr(self, 'df_fng', None)
+
+        # Config (getattr defaults match Fix #3 allowlist defaults).
+        velocity_threshold    = getattr(self, 'tortuosity_velocity_threshold', 1.0)
+        bout_min_frames       = getattr(self, 'tortuosity_bout_min_frames', 10)
+        bout_min_displacement = getattr(self, 'tortuosity_bout_min_displacement', 2.0)
+        pixel_to_cm           = getattr(self, 'pixel_to_cm', 1.0)
+        frame_rate            = getattr(self, 'frame_rate', 1.0)
 
         if df is None or df.empty or 'particle' not in df.columns:
             print('   No linked tracks; skipping tortuosity computation')
             self.df_tortuosity_bouts = pd.DataFrame(
                 columns=_tortuosity.TORTUOSITY_BOUT_COLUMNS)
-        elif df_fng is None or df_fng.empty:
-            print('   No FNG events; skipping tortuosity computation')
-            self.df_tortuosity_bouts = pd.DataFrame(
-                columns=_tortuosity.TORTUOSITY_BOUT_COLUMNS)
         else:
-            print('-- [ Tortuosity ] Computing per-fly bout metrics')
-            self.df_tortuosity_bouts = _tortuosity.compute_tortuosity_table(df, df_fng)
+            print('-- [ Tortuosity ] Computing per-fly bout metrics '
+                  '(velocity threshold = %.3f mm/s)' % velocity_threshold)
+            self.df_tortuosity_bouts = _tortuosity.compute_tortuosity_table(
+                df,
+                pixel_to_cm=pixel_to_cm,
+                frame_rate=frame_rate,
+                velocity_threshold=velocity_threshold,
+                bout_min_frames=bout_min_frames,
+                bout_min_displacement=bout_min_displacement,
+            )
             print('   %d bout-particle row(s) computed'
                   % len(self.df_tortuosity_bouts))
 
