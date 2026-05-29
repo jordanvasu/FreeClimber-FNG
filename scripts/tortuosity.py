@@ -24,35 +24,47 @@ Four metrics are computed per climbing bout, per fly:
                                net descent). The PRIMARY climbing metric.
   4. mean_turning_angle (rad)  AUXILIARY path-shape metric: mean absolute
                                turning angle between consecutive step vectors,
-                               in radians. 0 == straight, pi/2 == random walk,
-                               pi == reversals every step. Kept for closed-loop
-                               bouts (where T and S degenerate) and as a
-                               directional-persistence indicator independent of
-                               T / S / vertical_efficiency.
+                               in radians. Kept for closed-loop bouts and as a
+                               directional-persistence indicator.
+
+BOUT SEGMENTATION  (Fix #2 -- INDEPENDENT of FNG events)
+  For each (vial, particle) trajectory, bouts are detected by per-frame
+  vertical climbing velocity. A bout is a maximal run of consecutive frames
+  whose step-wise vertical velocity exceeds velocity_threshold (mm/s).
+  Bouts are terminated when the velocity falls to or below the threshold for
+  any single inter-frame step. Bouts shorter than bout_min_frames frames OR
+  with a net vertical displacement below bout_min_displacement mm are then
+  dropped.
+
+  compute_tortuosity_table does NOT consult FNG event data; it has no
+  dependency on _detect_fng_series, self.fng_events, or any FNG output.
 
 Y-CONVENTION
-  detector.step_5 inverts y via detector.invert_y (detector_fng.py:1492), so in
-  self.df_filtered "climbing" means INCREASING y. Confirmed empirically against
-  the cohort climbing-slope sign reported by detector.local_linear_regression
-  on the synthetic FNG validation fixture: slope is positive (+4.7428 px/frame)
-  during the climb, with mean y rising from ~7.8 (early frames) to ~155
-  (late frames). vertical_efficiency relies on this convention.
+  detector.step_5 inverts y via detector.invert_y (detector_fng.py:1492), so
+  in self.df_filtered "climbing" means INCREASING y. Confirmed empirically
+  against the cohort climbing-slope sign reported by
+  detector.local_linear_regression on the FNG synthetic validation fixture
+  (slope is positive, +4.7428 px/frame, during the climb; mean y rises from
+  ~7.8 in early frames to ~155 in late frames).
 
 UNITS
-  vertical_efficiency is unit-free, but is defined for path_length and
-  (y_end - y_start) measured in the SAME linear units. compute_tortuosity in
-  detector_fng.py converts pixel coordinates to MILLIMETRES (using
-  self.pixel_to_cm) before invoking these helpers, so reported path lengths
-  and net displacements are in mm.
+  vertical_efficiency, tortuosity and straightness are unit-free, but are
+  defined for path_length and (y_end - y_start) measured in the SAME linear
+  units. compute_tortuosity in detector_fng.py converts pixel coordinates to
+  MILLIMETRES (using self.pixel_to_cm, which is pixels-per-cm) before
+  invoking these helpers, so reported path lengths and net displacements are
+  in mm and velocity thresholds are in mm/s.
 """
 
 import numpy as np
 import pandas as pd
 
 TORTUOSITY_BOUT_COLUMNS = [
-    'vial', 'event_idx', 'particle',
+    'vial', 'particle', 'bout_idx',
     'frame_start', 'frame_end', 'n_points',
-    'path_length', 'net_displacement',
+    'duration_frames', 'duration_sec',
+    'path_length_mm', 'net_displacement_mm',
+    'vertical_displacement_mm',
     'tortuosity', 'straightness', 'vertical_efficiency',
     'mean_turning_angle_rad',
 ]
@@ -66,6 +78,9 @@ TORTUOSITY_PARTICLE_COLUMNS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Pure metric helpers (per-bout)
+# ---------------------------------------------------------------------------
 def path_length(xs, ys):
     """Cumulative Euclidean distance along the (xs, ys) polyline.
 
@@ -225,32 +240,92 @@ def bout_metrics(xs, ys):
     }
 
 
-def _bout_windows_for_vial(df_fng_vial, frame_max):
-    """Yield (event_idx, frame_start, frame_end) for each climbing bout in a vial.
+# ---------------------------------------------------------------------------
+# Bout segmentation (Fix #2: velocity-threshold, NOT FNG-driven)
+# ---------------------------------------------------------------------------
+def _segment_climbing_bouts(frames, ys_mm, frame_rate, velocity_threshold):
+    """Identify climbing bouts in a single trajectory by vertical velocity.
 
-    The bout window is [previous fall_end + 1, frame_peak]. The first bout
-    starts at frame 0. Events are processed in ascending frame_peak order.
-    """
-    df = df_fng_vial.sort_values('frame_peak').reset_index(drop=True)
-    prev_fall_end = -1
-    for _, row in df.iterrows():
-        start = max(0, prev_fall_end + 1)
-        end = int(row['frame_peak'])
-        if end >= start:
-            yield int(row['event_idx']), int(start), int(end)
-        prev_fall_end = int(row['frame_fall_end'])
-
-
-def compute_tortuosity_table(df_filtered, df_fng):
-    """Build the per-(vial, event, particle) tortuosity-bout table.
+    A bout is a maximal contiguous run of consecutive (frame_k, frame_{k+1})
+    steps whose step-wise vertical velocity exceeds velocity_threshold mm/s.
+    Note: contiguous in *position within the per-particle frame sequence*,
+    NOT in absolute frame index -- so a single skipped detection terminates
+    a bout, which is the conservative behavior for noisy/intermittent
+    detections.
 
     Inputs:
-      df_filtered : DataFrame with columns frame, vial, x, y, particle (the
-                    linked output written by detector.link_trajectories).
-                    A 'particle' column is required; if absent, an empty
-                    table is returned (cohort mode has no per-fly tracks).
-      df_fng      : DataFrame with columns vial, event_idx, frame_peak,
-                    frame_fall_end -- the event table written by compute_fng().
+      frames             : 1-D int array, sorted ascending, the per-frame
+                           indices for one particle.
+      ys_mm              : 1-D float array, same length, vertical positions
+                           in millimetres (climbing = increasing).
+      frame_rate         : frames per second.
+      velocity_threshold : minimum vertical step velocity in mm/s.
+
+    Returns:
+      list of (start_pos, end_pos) inclusive tuples giving the index range
+      in frames/ys_mm covered by each bout. A bout spanning steps k..m
+      covers positions k..m+1 (m-k+2 frames).
+    """
+    n = int(len(frames))
+    if n < 2:
+        return []
+
+    fr = float(frame_rate) if frame_rate else 1.0
+    df_frames = np.diff(frames).astype(float)
+    dy = np.diff(ys_mm).astype(float)
+
+    # Step duration in seconds. Guard against zero-duration steps (duplicate
+    # frame numbers should never occur, but if they do treat the step as
+    # below threshold).
+    dt_sec = np.where(df_frames > 0, df_frames / fr, np.inf)
+    vy = np.where(np.isfinite(dt_sec), dy / dt_sec, 0.0)
+    climbing_step = vy > float(velocity_threshold)
+
+    bouts = []
+    in_bout = False
+    bout_start = 0
+    for k, climbing in enumerate(climbing_step):
+        if climbing:
+            if not in_bout:
+                in_bout = True
+                bout_start = k
+        else:
+            if in_bout:
+                bouts.append((bout_start, k))  # last climbing step was k-1; covers frames bout_start..k
+                in_bout = False
+    if in_bout:
+        bouts.append((bout_start, len(climbing_step)))
+    return bouts
+
+
+def compute_tortuosity_table(df_filtered,
+                             pixel_to_cm=1.0,
+                             frame_rate=1.0,
+                             velocity_threshold=0.0,
+                             bout_min_frames=1,
+                             bout_min_displacement=0.0):
+    """Build the per-(vial, particle, bout) tortuosity-bout table.
+
+    Bout segmentation is INDEPENDENT of FNG events (Fix #2): for each
+    (vial, particle) the trajectory is split into maximal contiguous runs of
+    inter-frame steps whose vertical velocity exceeds velocity_threshold
+    (mm/s). Bouts shorter than bout_min_frames frames or with vertical
+    displacement below bout_min_displacement mm are dropped.
+
+    Inputs:
+      df_filtered           : DataFrame with columns frame, vial, x, y,
+                              particle. (x, y) are in pixels with the
+                              df_filtered y-inversion convention (climbing =
+                              increasing y). Cohort-mode input (no 'particle'
+                              column) returns an empty table.
+      pixel_to_cm           : conversion factor (pixels per cm). Converts
+                              x, y from pixels to millimetres internally.
+      frame_rate            : frames per second.
+      velocity_threshold    : minimum vertical step velocity, in mm/s, for
+                              a step to count as a climbing step.
+      bout_min_frames       : drop bouts shorter than this many frames.
+      bout_min_displacement : drop bouts whose net vertical displacement is
+                              less than this many millimetres.
 
     Returns:
       DataFrame with columns TORTUOSITY_BOUT_COLUMNS. Empty (correctly-typed
@@ -258,46 +333,66 @@ def compute_tortuosity_table(df_filtered, df_fng):
     """
     if df_filtered is None or df_filtered.empty or 'particle' not in df_filtered.columns:
         return pd.DataFrame(columns=TORTUOSITY_BOUT_COLUMNS)
-    if df_fng is None or df_fng.empty:
-        return pd.DataFrame(columns=TORTUOSITY_BOUT_COLUMNS)
 
     needed = {'frame', 'vial', 'x', 'y', 'particle'}
     missing = needed - set(df_filtered.columns)
     if missing:
         raise ValueError('df_filtered missing required column(s): %s' % sorted(missing))
 
-    frame_max = int(df_filtered['frame'].max())
+    p2cm = float(pixel_to_cm) if pixel_to_cm else 1.0
+    px_to_mm = 10.0 / p2cm  # cm * 10 = mm, and pixels / (px per cm) = cm
+
     records = []
 
-    for vial, df_vial in df_filtered.groupby('vial'):
-        ev_vial = df_fng[df_fng['vial'] == vial]
-        if ev_vial.empty:
-            continue
+    for (vial, particle), dfp in df_filtered.groupby(['vial', 'particle']):
+        dfp = dfp.sort_values('frame').reset_index(drop=True)
+        frames = dfp['frame'].to_numpy()
+        xs_mm = dfp['x'].to_numpy(dtype=float) * px_to_mm
+        ys_mm = dfp['y'].to_numpy(dtype=float) * px_to_mm
 
-        for event_idx, fstart, fend in _bout_windows_for_vial(ev_vial, frame_max):
-            window = df_vial[(df_vial['frame'] >= fstart) & (df_vial['frame'] <= fend)]
-            if window.empty:
+        bouts = _segment_climbing_bouts(frames, ys_mm,
+                                        frame_rate=frame_rate,
+                                        velocity_threshold=velocity_threshold)
+        bout_ord = 0
+        for start_pos, end_pos in bouts:
+            # end_pos is the exclusive position of the last *climbing step*;
+            # the bout covers frame positions start_pos .. end_pos (inclusive),
+            # i.e. end_pos - start_pos + 1 points.
+            stop_pos = end_pos
+            xb = xs_mm[start_pos:stop_pos + 1]
+            yb = ys_mm[start_pos:stop_pos + 1]
+            fb = frames[start_pos:stop_pos + 1]
+
+            if len(fb) < 2:
                 continue
 
-            for particle, dfp in window.groupby('particle'):
-                dfp = dfp.sort_values('frame')
-                xs = dfp['x'].to_numpy()
-                ys = dfp['y'].to_numpy()
-                m = bout_metrics(xs, ys)
-                records.append({
-                    'vial': int(vial),
-                    'event_idx': int(event_idx),
-                    'particle': int(particle),
-                    'frame_start': int(dfp['frame'].iloc[0]),
-                    'frame_end': int(dfp['frame'].iloc[-1]),
-                    'n_points': m['n_points'],
-                    'path_length': m['path_length'],
-                    'net_displacement': m['net_displacement'],
-                    'tortuosity': m['tortuosity'],
-                    'straightness': m['straightness'],
-                    'vertical_efficiency': m['vertical_efficiency'],
-                    'mean_turning_angle_rad': m['mean_turning_angle_rad'],
-                })
+            duration_frames = int(fb[-1] - fb[0] + 1)
+            vertical_displacement_mm = float(yb[-1] - yb[0])
+
+            if duration_frames < int(bout_min_frames):
+                continue
+            if vertical_displacement_mm < float(bout_min_displacement):
+                continue
+
+            m = bout_metrics(xb, yb)
+            bout_ord += 1
+            records.append({
+                'vial': int(vial),
+                'particle': int(particle),
+                'bout_idx': int(bout_ord),
+                'frame_start': int(fb[0]),
+                'frame_end': int(fb[-1]),
+                'n_points': int(len(fb)),
+                'duration_frames': duration_frames,
+                'duration_sec': round(duration_frames / float(frame_rate), 6) if frame_rate else float('nan'),
+                'path_length_mm': m['path_length'],
+                'net_displacement_mm': m['net_displacement'],
+                'vertical_displacement_mm': vertical_displacement_mm,
+                'tortuosity': m['tortuosity'],
+                'straightness': m['straightness'],
+                'vertical_efficiency': m['vertical_efficiency'],
+                'mean_turning_angle_rad': m['mean_turning_angle_rad'],
+            })
 
     if not records:
         return pd.DataFrame(columns=TORTUOSITY_BOUT_COLUMNS)

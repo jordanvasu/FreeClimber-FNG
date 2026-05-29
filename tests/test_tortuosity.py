@@ -165,30 +165,29 @@ def _make_df_filtered():
     return pd.concat([fly_a, fly_b], ignore_index=True)
 
 
-def _make_df_fng():
-    """Two FNG events in vial 1 to drive bout windows."""
-    return pd.DataFrame([
-        {'vial': 1, 'event_idx': 1, 'frame_peak': 9, 'frame_fall_end': 12},
-        {'vial': 1, 'event_idx': 2, 'frame_peak': 19, 'frame_fall_end': 19},
-    ])
+## NOTE: prior FNG-driven bout segmentation tests are intentionally REMOVED
+## here per Fix #2 -- bouts are now defined by per-frame vertical velocity,
+## independent of FNG events. The replacement tests below exercise that
+## algorithm directly.
 
 
-def test_compute_tortuosity_table_per_event_per_particle():
+def test_compute_tortuosity_table_basic_velocity_segmentation():
+    """Both flies climb steadily across all 20 frames (~250 mm/s with
+    pixel_to_cm=1, frame_rate=25); with velocity_threshold=1 mm/s every
+    inter-frame step qualifies -> exactly one bout per particle (2 rows).
+    Fly 100's straight path has tortuosity == 1; fly 101's zig-zag > 1."""
     df = _make_df_filtered()
-    df_fng = _make_df_fng()
-    out = tort.compute_tortuosity_table(df, df_fng)
-
-    # 2 events x 2 particles = 4 rows.
-    assert len(out) == 4
-    assert set(out['event_idx']) == {1, 2}
+    out = tort.compute_tortuosity_table(
+        df, pixel_to_cm=1.0, frame_rate=25.0,
+        velocity_threshold=1.0, bout_min_frames=2, bout_min_displacement=0.0,
+    )
+    assert len(out) == 2
     assert set(out['particle']) == {100, 101}
 
-    # Fly 100 took a straight path in every bout -> tortuosity == 1.
     straight = out[out['particle'] == 100]
     assert np.allclose(straight['tortuosity'].to_numpy(), 1.0)
     assert np.allclose(straight['straightness'].to_numpy(), 1.0)
 
-    # Fly 101's zig-zag has longer path than net displacement -> T > 1.
     zigzag = out[out['particle'] == 101]
     assert (zigzag['tortuosity'] > 1.0).all()
     assert (zigzag['straightness'] < 1.0).all()
@@ -197,14 +196,7 @@ def test_compute_tortuosity_table_per_event_per_particle():
 def test_compute_tortuosity_table_no_particle_column():
     """Cohort-mode df_filtered (no 'particle' column) returns an empty table."""
     df = _make_df_filtered().drop(columns=['particle'])
-    out = tort.compute_tortuosity_table(df, _make_df_fng())
-    assert out.empty
-    assert list(out.columns) == tort.TORTUOSITY_BOUT_COLUMNS
-
-
-def test_compute_tortuosity_table_no_fng_events():
-    df = _make_df_filtered()
-    out = tort.compute_tortuosity_table(df, pd.DataFrame(columns=['vial', 'event_idx', 'frame_peak', 'frame_fall_end']))
+    out = tort.compute_tortuosity_table(df)
     assert out.empty
     assert list(out.columns) == tort.TORTUOSITY_BOUT_COLUMNS
 
@@ -212,7 +204,104 @@ def test_compute_tortuosity_table_no_fng_events():
 def test_compute_tortuosity_table_missing_required_column_raises():
     df = _make_df_filtered().drop(columns=['x'])
     with pytest.raises(ValueError):
-        tort.compute_tortuosity_table(df, _make_df_fng())
+        tort.compute_tortuosity_table(df)
+
+
+# ---------------------------------------------------------------------------
+# Fix #2: velocity-threshold bout segmentation algorithm
+# ---------------------------------------------------------------------------
+def _piecewise_climb(segments, frame_rate=25.0):
+    """Build a synthetic single-particle df_filtered from a list of
+    (n_frames, climb_per_frame_px) segments. y starts at 0 and climbs by
+    climb_per_frame_px on each frame of the segment; stationary segments use
+    climb_per_frame_px == 0.
+    """
+    rows = []
+    f = 0
+    y = 0.0
+    for n_frames, climb_per_frame in segments:
+        for _ in range(n_frames):
+            rows.append({'frame': f, 't': f / frame_rate, 'vial': 1,
+                         'x': 100.0, 'y': y, 'particle': 1})
+            y += climb_per_frame
+            f += 1
+    return pd.DataFrame(rows)
+
+
+def test_bout_segmentation_isolates_climbing():
+    """Three discrete climbing segments separated by stationary periods
+    produce exactly 3 bouts -- segmentation is on velocity, not on FNG."""
+    df = _piecewise_climb([
+        (15, 1.0),   # climb 1: 15 frames at ~250 mm/s
+        (10, 0.0),   # stationary
+        (20, 0.8),   # climb 2: 20 frames at ~200 mm/s
+        (10, 0.0),   # stationary
+        (15, 1.2),   # climb 3: 15 frames at ~300 mm/s
+    ])
+    out = tort.compute_tortuosity_table(
+        df, pixel_to_cm=1.0, frame_rate=25.0,
+        velocity_threshold=50.0,   # mm/s: well above 0, below all climbs
+        bout_min_frames=2,
+        bout_min_displacement=0.0,
+    )
+    assert len(out) == 3
+    assert list(out['bout_idx']) == [1, 2, 3]
+
+
+def test_bout_segmentation_no_fng_dependency():
+    """compute_tortuosity_table operates without any FNG event input. With
+    NO df_fng argument it still segments and emits bouts -- confirming
+    Fix #2's decoupling from FNG event data."""
+    df = _make_df_filtered()
+    # Pure positional call: only df_filtered + scalar config. No df_fng.
+    out = tort.compute_tortuosity_table(
+        df, pixel_to_cm=1.0, frame_rate=25.0,
+        velocity_threshold=1.0, bout_min_frames=2, bout_min_displacement=0.0,
+    )
+    assert not out.empty
+    assert len(out) == 2  # one bout per fly
+    assert 'bout_idx' in out.columns
+    # No FNG-derived 'event_idx' column should appear.
+    assert 'event_idx' not in out.columns
+
+
+def test_short_bouts_filtered():
+    """Bouts shorter than bout_min_frames are dropped."""
+    df = _piecewise_climb([
+        (4, 1.0),    # too short (4 frames)
+        (10, 0.0),
+        (20, 1.0),   # ok (20 frames)
+    ])
+    out = tort.compute_tortuosity_table(
+        df, pixel_to_cm=1.0, frame_rate=25.0,
+        velocity_threshold=10.0,
+        bout_min_frames=10,
+        bout_min_displacement=0.0,
+    )
+    assert len(out) == 1
+    assert int(out['duration_frames'].iloc[0]) >= 10
+
+
+def test_low_displacement_bouts_filtered():
+    """Bouts whose net vertical displacement is below the configured
+    threshold (mm) are dropped."""
+    # Two climbs: one rises ~1 mm total, one rises ~10 mm total.
+    df = _piecewise_climb([
+        (15, 0.005),   # ~15 * 0.005 px = 0.075 px; in mm with pixel_to_cm=1
+                       # that is 0.75 mm -- below the 5 mm threshold.
+        (10, 0.0),
+        (15, 0.10),    # ~15 * 0.10 px = 1.5 px = 15.0 mm -- above 5 mm.
+    ])
+    out = tort.compute_tortuosity_table(
+        df, pixel_to_cm=1.0, frame_rate=25.0,
+        # Threshold low enough that the slow climb is also "climbing"; the
+        # FILTER then drops the low-displacement bout.
+        velocity_threshold=0.5,
+        bout_min_frames=2,
+        bout_min_displacement=5.0,   # mm
+    )
+    assert len(out) == 1
+    assert float(out['vertical_displacement_mm'].iloc[0]) >= 5.0
 
 
 # ---------------------------------------------------------------------------
@@ -232,15 +321,20 @@ def _bind(det, *names):
 
 def test_detector_compute_tortuosity_writes_csv(tmp_path):
     """detector.compute_tortuosity() writes BOTH *.tortuosity_bouts.csv and
-    *.tortuosity_particle.csv next to the other outputs."""
+    *.tortuosity_particle.csv next to the other outputs. The detector is
+    invoked WITHOUT df_fng to exercise Fix #2's FNG-independence."""
     df = _make_df_filtered()
-    df_fng = _make_df_fng()
 
     det = types.SimpleNamespace(
         debug=False,
         df_filtered=df,
-        df_fng=df_fng,
+        # df_fng INTENTIONALLY ABSENT -- compute_tortuosity must not read it.
         name_nosuffix=os.path.join(str(tmp_path), "synthetic"),
+        pixel_to_cm=1.0,
+        frame_rate=25.0,
+        tortuosity_velocity_threshold=1.0,
+        tortuosity_bout_min_frames=2,
+        tortuosity_bout_min_displacement=0.0,
     )
     _bind(det, "compute_tortuosity")
     det.compute_tortuosity()
@@ -252,7 +346,7 @@ def test_detector_compute_tortuosity_writes_csv(tmp_path):
 
     bouts = pd.read_csv(bouts_path)
     assert list(bouts.columns) == tort.TORTUOSITY_BOUT_COLUMNS
-    assert len(bouts) == 4
+    assert len(bouts) == 2   # one bout per fly under uniform climbing
     assert 'vertical_efficiency' in bouts.columns
 
     particle = pd.read_csv(particle_path)
@@ -268,8 +362,8 @@ def test_detector_compute_tortuosity_cohort_mode_writes_empty_csv(tmp_path):
     det = types.SimpleNamespace(
         debug=False,
         df_filtered=df,
-        df_fng=_make_df_fng(),
         name_nosuffix=os.path.join(str(tmp_path), "cohort"),
+        pixel_to_cm=1.0, frame_rate=25.0,
     )
     _bind(det, "compute_tortuosity")
     det.compute_tortuosity()
