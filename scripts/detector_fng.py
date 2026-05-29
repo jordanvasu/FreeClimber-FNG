@@ -1214,9 +1214,6 @@ class detector(object):
         bout_min_displacement = getattr(self, 'tortuosity_bout_min_displacement', 2.0)
         pixel_to_cm           = getattr(self, 'pixel_to_cm', 1.0)
         frame_rate            = getattr(self, 'frame_rate', 1.0)
-        # smoothing_window is consumed by compute_tortuosity_table when Fix #4
-        # lands; it is read here so a misconfigured value surfaces early.
-        _ = int(smoothing_window)
 
         if df is None or df.empty or 'particle' not in df.columns:
             print('   No linked tracks; skipping tortuosity computation')
@@ -1232,6 +1229,7 @@ class detector(object):
                 velocity_threshold=velocity_threshold,
                 bout_min_frames=bout_min_frames,
                 bout_min_displacement=bout_min_displacement,
+                smoothing_window=smoothing_window,
             )
             print('   %d bout-particle row(s) computed'
                   % len(self.df_tortuosity_bouts))

@@ -58,6 +58,7 @@ UNITS
 
 import numpy as np
 import pandas as pd
+from scipy.signal import savgol_filter
 
 TORTUOSITY_BOUT_COLUMNS = [
     'vial', 'particle', 'bout_idx',
@@ -241,6 +242,58 @@ def bout_metrics(xs, ys):
 
 
 # ---------------------------------------------------------------------------
+# Trajectory smoothing (Fix #4)
+# ---------------------------------------------------------------------------
+def _normalize_savgol_window(window):
+    """Coerce a user-supplied window length to a positive odd integer.
+
+    scipy.signal.savgol_filter requires window_length to be odd and at least
+    polyorder + 1. Returns the normalized window length; returns 0 to signal
+    "no smoothing" when window <= 1.
+    """
+    try:
+        w = int(window)
+    except (TypeError, ValueError):
+        return 0
+    if w <= 1:
+        return 0
+    if w % 2 == 0:
+        w += 1
+    return w
+
+
+def smooth_xy(xs, ys, window, particle_label=None):
+    """Apply Savitzky-Golay smoothing (polyorder=2, mode='nearest') to x and y.
+
+    If the input has fewer frames than the (normalized) window length the
+    smoothing is SKIPPED for this particle, a warning line is printed to
+    stdout, and the raw arrays are returned unchanged (per spec).
+
+    Returns (xs_smoothed, ys_smoothed, smoothing_applied) where the third
+    element is a bool indicating whether smoothing actually ran.
+    """
+    xs = np.asarray(xs, dtype=float)
+    ys = np.asarray(ys, dtype=float)
+    w = _normalize_savgol_window(window)
+
+    if w == 0:
+        return xs, ys, False
+
+    n = int(xs.size)
+    if n < w:
+        label = '' if particle_label is None else ' for particle %s' % particle_label
+        print('   !! tortuosity: skipping Savitzky-Golay smoothing%s '
+              '(have %d frames, need %d); using raw coordinates'
+              % (label, n, w))
+        return xs, ys, False
+
+    polyorder = min(2, w - 1)
+    xs_s = savgol_filter(xs, window_length=w, polyorder=polyorder, mode='nearest')
+    ys_s = savgol_filter(ys, window_length=w, polyorder=polyorder, mode='nearest')
+    return xs_s, ys_s, True
+
+
+# ---------------------------------------------------------------------------
 # Bout segmentation (Fix #2: velocity-threshold, NOT FNG-driven)
 # ---------------------------------------------------------------------------
 def _segment_climbing_bouts(frames, ys_mm, frame_rate, velocity_threshold):
@@ -303,14 +356,22 @@ def compute_tortuosity_table(df_filtered,
                              frame_rate=1.0,
                              velocity_threshold=0.0,
                              bout_min_frames=1,
-                             bout_min_displacement=0.0):
+                             bout_min_displacement=0.0,
+                             smoothing_window=1):
     """Build the per-(vial, particle, bout) tortuosity-bout table.
 
-    Bout segmentation is INDEPENDENT of FNG events (Fix #2): for each
-    (vial, particle) the trajectory is split into maximal contiguous runs of
-    inter-frame steps whose vertical velocity exceeds velocity_threshold
-    (mm/s). Bouts shorter than bout_min_frames frames or with vertical
-    displacement below bout_min_displacement mm are dropped.
+    Pipeline per particle (Fix #4):
+      1. Convert (x, y) from pixels to millimetres using pixel_to_cm.
+      2. Apply Savitzky-Golay smoothing (polyorder=2, mode='nearest') with
+         the configured smoothing_window. Particles with fewer frames than
+         the window are skipped (warning logged) and use raw coordinates.
+      3. Detect climbing bouts from the SMOOTHED y-velocity.
+      4. Drop bouts below bout_min_frames or bout_min_displacement.
+      5. Compute per-bout path_length, net_displacement,
+         vertical_displacement, vertical_efficiency, tortuosity,
+         straightness, mean_turning_angle from the SMOOTHED coordinates.
+
+    Bout segmentation is INDEPENDENT of FNG events (Fix #2).
 
     Inputs:
       df_filtered           : DataFrame with columns frame, vial, x, y,
@@ -326,6 +387,9 @@ def compute_tortuosity_table(df_filtered,
       bout_min_frames       : drop bouts shorter than this many frames.
       bout_min_displacement : drop bouts whose net vertical displacement is
                               less than this many millimetres.
+      smoothing_window      : Savitzky-Golay window length in frames
+                              (polyorder=2). <=1 disables smoothing; even
+                              values are rounded up to the next odd.
 
     Returns:
       DataFrame with columns TORTUOSITY_BOUT_COLUMNS. Empty (correctly-typed
@@ -349,6 +413,13 @@ def compute_tortuosity_table(df_filtered,
         frames = dfp['frame'].to_numpy()
         xs_mm = dfp['x'].to_numpy(dtype=float) * px_to_mm
         ys_mm = dfp['y'].to_numpy(dtype=float) * px_to_mm
+
+        # Savitzky-Golay smoothing of (x, y) per particle, in mm. ALL
+        # downstream computations -- velocity, bout segmentation, path
+        # length, net displacement, vertical_efficiency, tortuosity,
+        # straightness, turning angle -- use the smoothed arrays.
+        xs_mm, ys_mm, _ = smooth_xy(xs_mm, ys_mm, smoothing_window,
+                                    particle_label=int(particle))
 
         bouts = _segment_climbing_bouts(frames, ys_mm,
                                         frame_rate=frame_rate,

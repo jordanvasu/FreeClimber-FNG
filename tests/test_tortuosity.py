@@ -282,6 +282,72 @@ def test_short_bouts_filtered():
     assert int(out['duration_frames'].iloc[0]) >= 10
 
 
+def test_smoothing_reduces_noise_inflation(capsys):
+    """A perfectly straight vertical climb with Gaussian (sigma=0.5 mm)
+    noise added to x and y produces a tortuosity closer to 1.0 with
+    Savitzky-Golay smoothing enabled (window=5) than without (window=1)."""
+    rng = np.random.default_rng(20260529)
+    n = 100
+    frames = np.arange(n)
+    # Pure climb: y_true = linspace 0..50 px == 0..500 mm (px_to_mm=10 here).
+    y_true = np.linspace(0.0, 50.0, n)
+    x_true = np.zeros(n)
+    # sigma = 0.5 mm in mm-space == 0.05 px (with pixel_to_cm=1.0 -> 1 px == 10 mm)
+    sigma_px = 0.05
+    xs = x_true + rng.normal(0.0, sigma_px, n)
+    ys = y_true + rng.normal(0.0, sigma_px, n)
+
+    df = pd.DataFrame({'frame': frames, 'vial': 1,
+                       'x': xs, 'y': ys, 'particle': 1})
+
+    # No smoothing: window = 1 disables Sav-Gol per _normalize_savgol_window.
+    out_raw = tort.compute_tortuosity_table(
+        df, pixel_to_cm=1.0, frame_rate=25.0,
+        velocity_threshold=0.0,
+        bout_min_frames=2, bout_min_displacement=0.0,
+        smoothing_window=1,
+    )
+    out_smoothed = tort.compute_tortuosity_table(
+        df, pixel_to_cm=1.0, frame_rate=25.0,
+        velocity_threshold=0.0,
+        bout_min_frames=2, bout_min_displacement=0.0,
+        smoothing_window=5,
+    )
+
+    assert not out_raw.empty and not out_smoothed.empty
+    t_raw = float(out_raw['tortuosity'].iloc[0])
+    t_smoothed = float(out_smoothed['tortuosity'].iloc[0])
+
+    # Smoothing should pull T strictly closer to the ideal value of 1.0.
+    assert abs(t_smoothed - 1.0) < abs(t_raw - 1.0), (
+        'smoothing did not reduce noise-driven tortuosity inflation: '
+        'raw T=%.6f smoothed T=%.6f' % (t_raw, t_smoothed)
+    )
+
+
+def test_smoothing_skipped_for_short_trajectories(capsys):
+    """A particle with 3 frames and smoothing_window=5 produces a clear
+    stdout warning and computation proceeds using the raw coordinates."""
+    df = pd.DataFrame({
+        'frame': [0, 1, 2], 'vial': 1,
+        'x': [0.0, 0.0, 0.0], 'y': [0.0, 1.0, 2.0],
+        'particle': 42,
+    })
+    out = tort.compute_tortuosity_table(
+        df, pixel_to_cm=1.0, frame_rate=25.0,
+        velocity_threshold=0.0,
+        bout_min_frames=2, bout_min_displacement=0.0,
+        smoothing_window=5,
+    )
+    captured = capsys.readouterr().out
+    assert 'skipping Savitzky-Golay smoothing' in captured, (
+        'expected a warning about skipped smoothing; got:\n%s' % captured)
+    assert 'particle 42' in captured
+    # Computation still produced a bout (raw coords are a straight climb).
+    assert len(out) == 1
+    assert int(out['particle'].iloc[0]) == 42
+
+
 def test_low_displacement_bouts_filtered():
     """Bouts whose net vertical displacement is below the configured
     threshold (mm) are dropped."""
