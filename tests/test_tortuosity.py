@@ -96,6 +96,43 @@ def test_coincident_points():
     assert math.isnan(m['straightness'])
     # No non-zero step vectors -> turning angle is undefined.
     assert math.isnan(m['mean_turning_angle_rad'])
+    # Vertical efficiency: clamped at 0 when path_length == 0.
+    assert m['vertical_efficiency'] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# vertical_efficiency: primary climbing metric (Fix #1)
+# ---------------------------------------------------------------------------
+def test_vertical_efficiency_perfect_climb():
+    """Pure vertical climb -> vertical_efficiency = 1.0."""
+    ys = np.linspace(0.0, 10.0, 50)
+    xs = np.zeros_like(ys)
+    ve = tort.vertical_efficiency(xs, ys)
+    assert ve == pytest.approx(1.0, abs=1e-3)
+
+
+def test_vertical_efficiency_horizontal_walk():
+    """Pure horizontal walk -> vertical_efficiency = 0.0."""
+    xs = np.linspace(0.0, 10.0, 50)
+    ys = np.zeros_like(xs)
+    ve = tort.vertical_efficiency(xs, ys)
+    assert ve == pytest.approx(0.0, abs=1e-3)
+
+
+def test_vertical_efficiency_descending():
+    """Net descent -> vertical_efficiency clamped at 0.0."""
+    xs = np.zeros(50)
+    ys = np.linspace(10.0, 0.0, 50)
+    ve = tort.vertical_efficiency(xs, ys)
+    assert ve == pytest.approx(0.0, abs=1e-3)
+
+
+def test_vertical_efficiency_diagonal():
+    """45-degree diagonal climb -> vertical_efficiency = sin(45 deg) ~ 0.707."""
+    xs = np.linspace(0.0, 10.0, 50)
+    ys = np.linspace(0.0, 10.0, 50)
+    ve = tort.vertical_efficiency(xs, ys)
+    assert ve == pytest.approx(math.sin(math.pi / 4.0), abs=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -162,14 +199,14 @@ def test_compute_tortuosity_table_no_particle_column():
     df = _make_df_filtered().drop(columns=['particle'])
     out = tort.compute_tortuosity_table(df, _make_df_fng())
     assert out.empty
-    assert list(out.columns) == tort.TORTUOSITY_COLUMNS
+    assert list(out.columns) == tort.TORTUOSITY_BOUT_COLUMNS
 
 
 def test_compute_tortuosity_table_no_fng_events():
     df = _make_df_filtered()
     out = tort.compute_tortuosity_table(df, pd.DataFrame(columns=['vial', 'event_idx', 'frame_peak', 'frame_fall_end']))
     assert out.empty
-    assert list(out.columns) == tort.TORTUOSITY_COLUMNS
+    assert list(out.columns) == tort.TORTUOSITY_BOUT_COLUMNS
 
 
 def test_compute_tortuosity_table_missing_required_column_raises():
@@ -194,8 +231,8 @@ def _bind(det, *names):
 
 
 def test_detector_compute_tortuosity_writes_csv(tmp_path):
-    """detector.compute_tortuosity() writes a *.tortuosity.csv next to the
-    other outputs and stores self.df_tortuosity."""
+    """detector.compute_tortuosity() writes BOTH *.tortuosity_bouts.csv and
+    *.tortuosity_particle.csv next to the other outputs."""
     df = _make_df_filtered()
     df_fng = _make_df_fng()
 
@@ -208,16 +245,24 @@ def test_detector_compute_tortuosity_writes_csv(tmp_path):
     _bind(det, "compute_tortuosity")
     det.compute_tortuosity()
 
-    out_path = os.path.join(str(tmp_path), "synthetic.tortuosity.csv")
-    assert os.path.exists(out_path)
+    bouts_path = os.path.join(str(tmp_path), "synthetic.tortuosity_bouts.csv")
+    particle_path = os.path.join(str(tmp_path), "synthetic.tortuosity_particle.csv")
+    assert os.path.exists(bouts_path)
+    assert os.path.exists(particle_path)
 
-    out = pd.read_csv(out_path)
-    assert list(out.columns) == tort.TORTUOSITY_COLUMNS
-    assert len(out) == 4
+    bouts = pd.read_csv(bouts_path)
+    assert list(bouts.columns) == tort.TORTUOSITY_BOUT_COLUMNS
+    assert len(bouts) == 4
+    assert 'vertical_efficiency' in bouts.columns
+
+    particle = pd.read_csv(particle_path)
+    assert list(particle.columns) == tort.TORTUOSITY_PARTICLE_COLUMNS
+    assert 'median_vertical_efficiency' in particle.columns
+    assert len(particle) == 2  # two particles -> two rows
 
 
 def test_detector_compute_tortuosity_cohort_mode_writes_empty_csv(tmp_path):
-    """Cohort mode (no 'particle' column) still emits a header-only csv so
+    """Cohort mode (no 'particle' column) still emits header-only csvs so
     downstream tooling doesn't have to special-case missing files."""
     df = _make_df_filtered().drop(columns=['particle'])
     det = types.SimpleNamespace(
@@ -229,8 +274,14 @@ def test_detector_compute_tortuosity_cohort_mode_writes_empty_csv(tmp_path):
     _bind(det, "compute_tortuosity")
     det.compute_tortuosity()
 
-    out_path = os.path.join(str(tmp_path), "cohort.tortuosity.csv")
-    assert os.path.exists(out_path)
-    out = pd.read_csv(out_path)
-    assert out.empty
-    assert list(out.columns) == tort.TORTUOSITY_COLUMNS
+    bouts_path = os.path.join(str(tmp_path), "cohort.tortuosity_bouts.csv")
+    particle_path = os.path.join(str(tmp_path), "cohort.tortuosity_particle.csv")
+    assert os.path.exists(bouts_path)
+    assert os.path.exists(particle_path)
+
+    bouts = pd.read_csv(bouts_path)
+    assert bouts.empty
+    assert list(bouts.columns) == tort.TORTUOSITY_BOUT_COLUMNS
+    particle = pd.read_csv(particle_path)
+    assert particle.empty
+    assert list(particle.columns) == tort.TORTUOSITY_PARTICLE_COLUMNS

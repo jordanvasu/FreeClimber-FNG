@@ -1167,18 +1167,24 @@ class detector(object):
 
     def compute_tortuosity(self):
         """
-        Compute per-fly, per-bout tortuosity metrics and save *.tortuosity.csv.
+        Compute per-fly, per-bout tortuosity metrics and save the two
+        tortuosity CSV files.
 
         Runs only in individual mode (gated by the step_5 hook), after
         link_trajectories() has populated 'particle' on self.df_filtered and
         compute_fng() has populated self.df_fng. Cohort mode never reaches
         here, so existing output is untouched.
 
-        Writes <video>.tortuosity.csv with one row per (vial, event_idx,
-        particle): classical tortuosity, straightness index, and mean
-        absolute turning angle (radians) over each climbing bout.
-        See scripts/tortuosity.py for the metric definitions and the
-        bout-window convention.
+        Writes:
+          <video>.tortuosity_bouts.csv    one row per (vial, event_idx,
+                                          particle) bout: tortuosity,
+                                          straightness, vertical_efficiency,
+                                          mean turning angle (rad).
+          <video>.tortuosity_particle.csv one row per (vial, particle): n_bouts
+                                          and median_vertical_efficiency.
+
+        See scripts/tortuosity.py for metric definitions, the y-convention,
+        and the bout-window convention.
         """
         if self.debug: print('detector.compute_tortuosity')
 
@@ -1187,18 +1193,30 @@ class detector(object):
 
         if df is None or df.empty or 'particle' not in df.columns:
             print('   No linked tracks; skipping tortuosity computation')
-            self.df_tortuosity = pd.DataFrame(columns=_tortuosity.TORTUOSITY_COLUMNS)
+            self.df_tortuosity_bouts = pd.DataFrame(
+                columns=_tortuosity.TORTUOSITY_BOUT_COLUMNS)
         elif df_fng is None or df_fng.empty:
             print('   No FNG events; skipping tortuosity computation')
-            self.df_tortuosity = pd.DataFrame(columns=_tortuosity.TORTUOSITY_COLUMNS)
+            self.df_tortuosity_bouts = pd.DataFrame(
+                columns=_tortuosity.TORTUOSITY_BOUT_COLUMNS)
         else:
             print('-- [ Tortuosity ] Computing per-fly bout metrics')
-            self.df_tortuosity = _tortuosity.compute_tortuosity_table(df, df_fng)
-            print('   %d bout-particle row(s) computed' % len(self.df_tortuosity))
+            self.df_tortuosity_bouts = _tortuosity.compute_tortuosity_table(df, df_fng)
+            print('   %d bout-particle row(s) computed'
+                  % len(self.df_tortuosity_bouts))
 
-        path_tort = self.name_nosuffix + '.tortuosity.csv'
-        self.df_tortuosity.to_csv(path_tort, index=False)
-        print('                --> Saved:', path_tort.split('/')[-1])
+        self.df_tortuosity_particle = _tortuosity.compute_particle_table(
+            self.df_tortuosity_bouts)
+
+        # Backward-compat alias used by earlier callers / tests.
+        self.df_tortuosity = self.df_tortuosity_bouts
+
+        path_bouts = self.name_nosuffix + '.tortuosity_bouts.csv'
+        path_particle = self.name_nosuffix + '.tortuosity_particle.csv'
+        self.df_tortuosity_bouts.to_csv(path_bouts, index=False)
+        self.df_tortuosity_particle.to_csv(path_particle, index=False)
+        print('                --> Saved:', path_bouts.split('/')[-1])
+        print('                --> Saved:', path_particle.split('/')[-1])
         return
 
     def link_trajectories(self):
