@@ -94,6 +94,26 @@ unchanged. See `example/example.cfg` for the keys as commented-out defaults.
 > **Note:** Individual mode is currently command-line only. GUI exposure is
 > deferred until linking is validated on real multi-fly data.
 
+### Per-fly tortuosity metrics
+
+When individual mode is enabled, three tortuosity metrics are additionally
+computed per fly, per climbing bout, and written to `<video>.tortuosity.csv`:
+
+| Metric | Definition | Range |
+|---|---|---|
+| `tortuosity` | path length / net displacement | `>= 1` (NaN for closed bouts) |
+| `straightness` | net displacement / path length | `[0, 1]` |
+| `mean_turning_angle_rad` | mean absolute turning angle between consecutive step vectors | `[0, pi]` |
+
+A *climbing bout* is the contiguous frame window from the previous FNG event's
+fall-end (or the start of the recording, for the first event) up to and
+including the current event's peak frame. Bouts are defined per vial using
+the same FNG events emitted to `<video>.fng.csv`, and metrics are then
+computed per linked particle inside each window. One row is emitted per
+`(vial, event_idx, particle)` tuple. See `scripts/tortuosity.py` for the
+formal definitions and degenerate-case handling, and `dashboard/` for a
+small exploratory plot script.
+
 ---
 
 ## Repository Structure
