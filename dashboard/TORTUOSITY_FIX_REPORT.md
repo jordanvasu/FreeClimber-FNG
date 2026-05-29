@@ -1,8 +1,16 @@
 # Tortuosity-metrics spec-conformance fixes
 
-Companion to `dashboard/TORTUOSITY_IMPLEMENTATION_REPORT.md` (initial
-implementation). This document records the four spec-deviation fixes
-applied on top of that initial implementation.
+This document records the four spec-deviation fixes applied on top of
+the initial tortuosity implementation (branch
+`feature/tortuosity-metrics`, parent commit `df79d0e`).
+
+**Note on the previous report.** The fix prompt referred to a
+`dashboard/TORTUOSITY_IMPLEMENTATION_REPORT.md` as the prior status
+report. That file does not exist in the repository — the initial
+implementation's status report was an in-chat prose summary, not a
+committed markdown file. Per principle G (do not rewrite history) and
+the spec instruction "in addition to, not replacing", I have not
+fabricated a backdated report; this fix report stands alone.
 
 - **Branch:** `feature/tortuosity-metrics`
 - **Final commit SHA:** `c5b51fb1dd29738670e8974b686dd42dda4ddb3`
