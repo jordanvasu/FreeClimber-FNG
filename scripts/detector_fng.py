@@ -110,6 +110,9 @@ class detector(object):
             'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
             'analysis_mode', 'link_search_range', 'link_memory',
             'link_predictor', 'link_min_track_length',
+            'tortuosity_enabled', 'tortuosity_smoothing_window',
+            'tortuosity_velocity_threshold', 'tortuosity_bout_min_frames',
+            'tortuosity_bout_min_displacement',
         }
 
         ## Pass imported variables to the detector object
@@ -163,6 +166,9 @@ class detector(object):
                 'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
                 'analysis_mode', 'link_search_range', 'link_memory',
                 'link_predictor', 'link_min_track_length',
+                'tortuosity_enabled', 'tortuosity_smoothing_window',
+                'tortuosity_velocity_threshold', 'tortuosity_bout_min_frames',
+                'tortuosity_bout_min_displacement',
             }
 
             ## Filter, format, and import variables to detector object
@@ -1200,12 +1206,17 @@ class detector(object):
 
         df = getattr(self, 'df_filtered', None)
 
-        # Config (getattr defaults match Fix #3 allowlist defaults).
+        # Config (Fix #3 allowlist keys, defensive getattr with safe defaults
+        # so any .cfg file that omits the tortuosity_* keys keeps working).
+        smoothing_window      = getattr(self, 'tortuosity_smoothing_window', 5)
         velocity_threshold    = getattr(self, 'tortuosity_velocity_threshold', 1.0)
         bout_min_frames       = getattr(self, 'tortuosity_bout_min_frames', 10)
         bout_min_displacement = getattr(self, 'tortuosity_bout_min_displacement', 2.0)
         pixel_to_cm           = getattr(self, 'pixel_to_cm', 1.0)
         frame_rate            = getattr(self, 'frame_rate', 1.0)
+        # smoothing_window is consumed by compute_tortuosity_table when Fix #4
+        # lands; it is read here so a misconfigured value surfaces early.
+        _ = int(smoothing_window)
 
         if df is None or df.empty or 'particle' not in df.columns:
             print('   No linked tracks; skipping tortuosity computation')
@@ -1540,8 +1551,9 @@ class detector(object):
         #----FNG detection (per vial) ----
         self.compute_fng()
 
-        #---- Per-fly tortuosity metrics (individual mode only) ----
-        if getattr(self, 'analysis_mode', 'cohort') == 'individual':
+        #---- Per-fly tortuosity metrics (individual mode + tortuosity_enabled) ----
+        if (getattr(self, 'analysis_mode', 'cohort') == 'individual'
+                and getattr(self, 'tortuosity_enabled', True)):
             self.compute_tortuosity()
 
         ## Save the filtered DataFrame
