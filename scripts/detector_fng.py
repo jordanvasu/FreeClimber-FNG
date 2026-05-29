@@ -28,6 +28,8 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from matplotlib.lines import Line2D
 
+import tortuosity as _tortuosity
+
 ## Issue with 'SettingWithCopyWarning' in step_3
 pd.options.mode.chained_assignment = None  # default='warn'
 
@@ -124,8 +126,14 @@ class detector(object):
                 try:
                     setattr(self, key, ast.literal_eval(val_str.strip()))
                 except Exception:
-                    print('detector.load_for_gui: !! Could not import ( %s )' % item)
-        return     
+                    ## ast.literal_eval rejects Windows paths (backslash escape
+                    ## sequences, e.g. \\U in C:\\Users) and other non-literal
+                    ## strings; fall back to the raw value with any surrounding
+                    ## quotes stripped rather than dropping the key.
+                    setattr(self, key, val_str.strip().strip('"').strip("'"))
+                    if self.debug:
+                        print('detector.load_for_gui: kept ( %s ) as raw string' % item)
+        return
         
     def load_for_main(self, config_file = None):
         '''Loads experimental and detections variables to the detector object for command 
@@ -708,11 +716,29 @@ class detector(object):
         
         ## Looking at the distribution of spot metrics as a histogram
         x_array = np.histogram(x_array,bins = bins)[0]
-        
+
         ## Peak finding with SciPy.signal module
         peaks = find_peaks(x_array)[0]
+
+        ## Degenerate histogram with no interior peaks -- e.g. a single tight
+        ## mode from very clean, low-noise data. There is no noise/signal
+        ## valley to locate, so fall back to the dominant bin instead of
+        ## indexing an empty peak list (which previously raised IndexError).
+        if len(peaks) == 0:
+            threshold = int(np.argmax(x_array))
+            if self.debug: print('                   Threshold (fallback) =',threshold)
+            return threshold
+
         prominences = peak_prominences(x_array,peaks)
-        threshold = find_peaks(x_array, prominence=np.max(prominences))[0][0]
+        candidates = find_peaks(x_array, prominence=np.max(prominences))[0]
+
+        ## The prominence filter can exclude every peak (again, on near-unimodal
+        ## data); fall back to the most prominent peak directly rather than
+        ## indexing an empty array.
+        if len(candidates) > 0:
+            threshold = int(candidates[0])
+        else:
+            threshold = int(peaks[int(np.argmax(prominences[0]))])
         if self.debug: print('                   Threshold =',threshold)
         return threshold
 
@@ -1139,6 +1165,42 @@ class detector(object):
             self.df_fng.to_csv(path_fng, index=False)
         print('                --> Saved:', path_fng.split('/')[-1])
 
+    def compute_tortuosity(self):
+        """
+        Compute per-fly, per-bout tortuosity metrics and save *.tortuosity.csv.
+
+        Runs only in individual mode (gated by the step_5 hook), after
+        link_trajectories() has populated 'particle' on self.df_filtered and
+        compute_fng() has populated self.df_fng. Cohort mode never reaches
+        here, so existing output is untouched.
+
+        Writes <video>.tortuosity.csv with one row per (vial, event_idx,
+        particle): classical tortuosity, straightness index, and mean
+        absolute turning angle (radians) over each climbing bout.
+        See scripts/tortuosity.py for the metric definitions and the
+        bout-window convention.
+        """
+        if self.debug: print('detector.compute_tortuosity')
+
+        df = getattr(self, 'df_filtered', None)
+        df_fng = getattr(self, 'df_fng', None)
+
+        if df is None or df.empty or 'particle' not in df.columns:
+            print('   No linked tracks; skipping tortuosity computation')
+            self.df_tortuosity = pd.DataFrame(columns=_tortuosity.TORTUOSITY_COLUMNS)
+        elif df_fng is None or df_fng.empty:
+            print('   No FNG events; skipping tortuosity computation')
+            self.df_tortuosity = pd.DataFrame(columns=_tortuosity.TORTUOSITY_COLUMNS)
+        else:
+            print('-- [ Tortuosity ] Computing per-fly bout metrics')
+            self.df_tortuosity = _tortuosity.compute_tortuosity_table(df, df_fng)
+            print('   %d bout-particle row(s) computed' % len(self.df_tortuosity))
+
+        path_tort = self.name_nosuffix + '.tortuosity.csv'
+        self.df_tortuosity.to_csv(path_tort, index=False)
+        print('                --> Saved:', path_tort.split('/')[-1])
+        return
+
     def link_trajectories(self):
         """
         Link per-frame detections into per-fly trajectories, one vial at a time.
@@ -1439,6 +1501,10 @@ class detector(object):
 
         #----FNG detection (per vial) ----
         self.compute_fng()
+
+        #---- Per-fly tortuosity metrics (individual mode only) ----
+        if getattr(self, 'analysis_mode', 'cohort') == 'individual':
+            self.compute_tortuosity()
 
         ## Save the filtered DataFrame
         path_filtered = self.name_nosuffix+'.filtered.csv'
