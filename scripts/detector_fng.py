@@ -28,6 +28,8 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from matplotlib.lines import Line2D
 
+import tortuosity as _tortuosity
+
 ## Issue with 'SettingWithCopyWarning' in step_3
 pd.options.mode.chained_assignment = None  # default='warn'
 
@@ -108,6 +110,9 @@ class detector(object):
             'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
             'analysis_mode', 'link_search_range', 'link_memory',
             'link_predictor', 'link_min_track_length',
+            'tortuosity_enabled', 'tortuosity_smoothing_window',
+            'tortuosity_velocity_threshold', 'tortuosity_bout_min_frames',
+            'tortuosity_bout_min_displacement',
         }
 
         ## Pass imported variables to the detector object
@@ -124,8 +129,14 @@ class detector(object):
                 try:
                     setattr(self, key, ast.literal_eval(val_str.strip()))
                 except Exception:
-                    print('detector.load_for_gui: !! Could not import ( %s )' % item)
-        return     
+                    ## ast.literal_eval rejects Windows paths (backslash escape
+                    ## sequences, e.g. \\U in C:\\Users) and other non-literal
+                    ## strings; fall back to the raw value with any surrounding
+                    ## quotes stripped rather than dropping the key.
+                    setattr(self, key, val_str.strip().strip('"').strip("'"))
+                    if self.debug:
+                        print('detector.load_for_gui: kept ( %s ) as raw string' % item)
+        return
         
     def load_for_main(self, config_file = None):
         '''Loads experimental and detections variables to the detector object for command 
@@ -155,6 +166,9 @@ class detector(object):
                 'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
                 'analysis_mode', 'link_search_range', 'link_memory',
                 'link_predictor', 'link_min_track_length',
+                'tortuosity_enabled', 'tortuosity_smoothing_window',
+                'tortuosity_velocity_threshold', 'tortuosity_bout_min_frames',
+                'tortuosity_bout_min_displacement',
             }
 
             ## Filter, format, and import variables to detector object
@@ -708,11 +722,29 @@ class detector(object):
         
         ## Looking at the distribution of spot metrics as a histogram
         x_array = np.histogram(x_array,bins = bins)[0]
-        
+
         ## Peak finding with SciPy.signal module
         peaks = find_peaks(x_array)[0]
+
+        ## Degenerate histogram with no interior peaks -- e.g. a single tight
+        ## mode from very clean, low-noise data. There is no noise/signal
+        ## valley to locate, so fall back to the dominant bin instead of
+        ## indexing an empty peak list (which previously raised IndexError).
+        if len(peaks) == 0:
+            threshold = int(np.argmax(x_array))
+            if self.debug: print('                   Threshold (fallback) =',threshold)
+            return threshold
+
         prominences = peak_prominences(x_array,peaks)
-        threshold = find_peaks(x_array, prominence=np.max(prominences))[0][0]
+        candidates = find_peaks(x_array, prominence=np.max(prominences))[0]
+
+        ## The prominence filter can exclude every peak (again, on near-unimodal
+        ## data); fall back to the most prominent peak directly rather than
+        ## indexing an empty array.
+        if len(candidates) > 0:
+            threshold = int(candidates[0])
+        else:
+            threshold = int(peaks[int(np.argmax(prominences[0]))])
         if self.debug: print('                   Threshold =',threshold)
         return threshold
 
@@ -1139,6 +1171,83 @@ class detector(object):
             self.df_fng.to_csv(path_fng, index=False)
         print('                --> Saved:', path_fng.split('/')[-1])
 
+    def compute_tortuosity(self):
+        """
+        Compute per-fly, per-bout tortuosity metrics and save the two
+        tortuosity CSV files. Runs only in individual mode (gated by the
+        step_5 hook).
+
+        Bout segmentation is INDEPENDENT of FNG events (Fix #2): this method
+        does NOT call _detect_fng_series, does NOT read self.df_fng /
+        self.fng_events, and does NOT use any FNG-derived data. Bouts are
+        detected per particle from vertical climbing velocity.
+
+        Configuration (all read via getattr with safe defaults so existing
+        .cfg files keep working unchanged):
+          tortuosity_velocity_threshold    mm/s threshold for a climbing step
+          tortuosity_bout_min_frames       minimum bout length, in frames
+          tortuosity_bout_min_displacement minimum bout net vertical
+                                           displacement, in mm
+
+        Writes:
+          <video>.tortuosity_bouts.csv    one row per (vial, particle,
+                                          bout_idx): tortuosity, straightness,
+                                          vertical_efficiency, mean turning
+                                          angle (rad), plus bout duration and
+                                          path length in mm.
+          <video>.tortuosity_particle.csv one row per (vial, particle):
+                                          n_bouts and
+                                          median_vertical_efficiency.
+
+        See scripts/tortuosity.py for metric definitions and the
+        velocity-threshold bout-segmentation algorithm.
+        """
+        if self.debug: print('detector.compute_tortuosity')
+
+        df = getattr(self, 'df_filtered', None)
+
+        # Config (Fix #3 allowlist keys, defensive getattr with safe defaults
+        # so any .cfg file that omits the tortuosity_* keys keeps working).
+        smoothing_window      = getattr(self, 'tortuosity_smoothing_window', 5)
+        velocity_threshold    = getattr(self, 'tortuosity_velocity_threshold', 1.0)
+        bout_min_frames       = getattr(self, 'tortuosity_bout_min_frames', 10)
+        bout_min_displacement = getattr(self, 'tortuosity_bout_min_displacement', 2.0)
+        pixel_to_cm           = getattr(self, 'pixel_to_cm', 1.0)
+        frame_rate            = getattr(self, 'frame_rate', 1.0)
+
+        if df is None or df.empty or 'particle' not in df.columns:
+            print('   No linked tracks; skipping tortuosity computation')
+            self.df_tortuosity_bouts = pd.DataFrame(
+                columns=_tortuosity.TORTUOSITY_BOUT_COLUMNS)
+        else:
+            print('-- [ Tortuosity ] Computing per-fly bout metrics '
+                  '(velocity threshold = %.3f mm/s)' % velocity_threshold)
+            self.df_tortuosity_bouts = _tortuosity.compute_tortuosity_table(
+                df,
+                pixel_to_cm=pixel_to_cm,
+                frame_rate=frame_rate,
+                velocity_threshold=velocity_threshold,
+                bout_min_frames=bout_min_frames,
+                bout_min_displacement=bout_min_displacement,
+                smoothing_window=smoothing_window,
+            )
+            print('   %d bout-particle row(s) computed'
+                  % len(self.df_tortuosity_bouts))
+
+        self.df_tortuosity_particle = _tortuosity.compute_particle_table(
+            self.df_tortuosity_bouts)
+
+        # Backward-compat alias used by earlier callers / tests.
+        self.df_tortuosity = self.df_tortuosity_bouts
+
+        path_bouts = self.name_nosuffix + '.tortuosity_bouts.csv'
+        path_particle = self.name_nosuffix + '.tortuosity_particle.csv'
+        self.df_tortuosity_bouts.to_csv(path_bouts, index=False)
+        self.df_tortuosity_particle.to_csv(path_particle, index=False)
+        print('                --> Saved:', path_bouts.split('/')[-1])
+        print('                --> Saved:', path_particle.split('/')[-1])
+        return
+
     def link_trajectories(self):
         """
         Link per-frame detections into per-fly trajectories, one vial at a time.
@@ -1439,6 +1548,11 @@ class detector(object):
 
         #----FNG detection (per vial) ----
         self.compute_fng()
+
+        #---- Per-fly tortuosity metrics (individual mode + tortuosity_enabled) ----
+        if (getattr(self, 'analysis_mode', 'cohort') == 'individual'
+                and getattr(self, 'tortuosity_enabled', True)):
+            self.compute_tortuosity()
 
         ## Save the filtered DataFrame
         path_filtered = self.name_nosuffix+'.filtered.csv'
