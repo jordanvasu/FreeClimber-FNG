@@ -19,6 +19,7 @@ import ffmpeg
 import numpy as np
 import pandas as pd
 import trackpy as tp
+import trackpy.predict
 import subprocess as sp
 from scipy.stats import linregress
 from scipy.signal import find_peaks,peak_prominences
@@ -105,6 +106,8 @@ class detector(object):
             'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
             'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
             'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
+            'analysis_mode', 'link_search_range', 'link_memory',
+            'link_predictor', 'link_min_track_length',
         }
 
         ## Pass imported variables to the detector object
@@ -150,6 +153,8 @@ class detector(object):
                 'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
                 'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
                 'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
+                'analysis_mode', 'link_search_range', 'link_memory',
+                'link_predictor', 'link_min_track_length',
             }
 
             ## Filter, format, and import variables to detector object
@@ -1134,8 +1139,113 @@ class detector(object):
             self.df_fng.to_csv(path_fng, index=False)
         print('                --> Saved:', path_fng.split('/')[-1])
 
-        
-        
+    def link_trajectories(self):
+        """
+        Link per-frame detections into per-fly trajectories, one vial at a time.
+
+        Runs only when analysis_mode == 'individual' (the step_5 hook gates this
+        call). Operates on self.df_filtered -- whose frame/vial/x/y columns are
+        already populated by step_4/step_5 -- assigns a globally unique
+        'particle' ID to every surviving detection, drops fragmentary tracks via
+        tp.filter_stubs, and writes <video>.tracks.csv alongside the other
+        outputs.
+
+        Modeled structurally on compute_fng(): config is pulled with defensive
+        getattr() so existing .cfg files lacking the link_* keys keep working,
+        each vial is processed independently, results are stored back on the
+        detector, and a CSV is saved. Cohort-mode analysis never reaches here,
+        so existing FNG detection output is unaffected.
+        ----
+        Inputs:
+          None -- reads self.df_filtered and the link_* configuration keys
+        ----
+        Returns:
+          None -- self.df_filtered gains a 'particle' column; <video>.tracks.csv
+                  is written
+        """
+        if self.debug: print('detector.link_trajectories')
+
+        ## Defensive config access -- mirrors the fng_* default pattern
+        search_range = getattr(self, 'link_search_range', 15)
+        memory       = getattr(self, 'link_memory', 3)
+        predictor    = getattr(self, 'link_predictor', 'nearest_velocity')
+        min_len      = getattr(self, 'link_min_track_length', 5)
+
+        print('-- [ Linking ] Linking per-fly trajectories (predictor: %s)' % predictor)
+
+        df = getattr(self, 'df_filtered', None)
+        if df is None or df.empty:
+            print('   No detections to link; skipping trajectory linking')
+            return
+
+        TRACK_COLUMNS = ['particle', 'frame', 't', 'vial', 'x', 'y']
+        naming_cols = list(getattr(self, 'file_details', {}).keys())
+
+        linked_frames = []
+        particle_offset = 0
+        total_stubs = 0
+        vials_processed = 0
+
+        ## Link each vial INDEPENDENTLY so particle IDs never swap across vials.
+        ## The 'vial' column was assigned in step_4.
+        for vial, group in df.groupby('vial'):
+            g = group.copy()
+
+            ## Branch on the configured predictor
+            if predictor == 'nearest_velocity':
+                pred = tp.predict.NearestVelocityPredict()
+                linked = pred.link_df(g, search_range=search_range, memory=memory)
+            elif predictor == 'none':
+                linked = tp.link_df(g, search_range=search_range, memory=memory)
+            else:
+                # TODO: unrecognized link_predictor value -- spec allows only
+                # 'nearest_velocity' or 'none'; falling back to plain linking.
+                print('   !! Unknown link_predictor (%s); using plain tp.link_df' % predictor)
+                linked = tp.link_df(g, search_range=search_range, memory=memory)
+
+            ## Drop fragmentary tracks shorter than link_min_track_length frames
+            n_before = linked['particle'].nunique()
+            linked = tp.filter_stubs(linked, threshold=min_len).reset_index(drop=True)
+            n_after = linked['particle'].nunique()
+            n_stubs = n_before - n_after
+            total_stubs += n_stubs
+            vials_processed += 1
+
+            if linked.empty:
+                print('   vial %s: 0 tracks survived (%s stub track(s) filtered)'
+                      % (vial, n_stubs))
+                continue
+
+            ## Offset particle IDs so each vial occupies a disjoint ID range
+            linked['particle'] = linked['particle'].astype(int) + particle_offset
+            particle_offset = int(linked['particle'].max()) + 1
+
+            n_particles = linked['particle'].nunique()
+            mean_len = linked.groupby('particle').size().mean()
+            print('   vial %s: %s unique particle(s), %s stub track(s) filtered, '
+                  'mean track length %.1f frames'
+                  % (vial, n_particles, n_stubs, mean_len))
+
+            linked_frames.append(linked)
+
+        ## Concatenate per-vial results back into df_filtered (now with 'particle')
+        if linked_frames:
+            self.df_filtered = pd.concat(linked_frames, ignore_index=True)
+        else:
+            self.df_filtered = df.iloc[0:0].copy()
+            self.df_filtered['particle'] = pd.Series(dtype=int)
+
+        print('-- [ Linking ] %s vial(s) processed, %s total stub track(s) filtered'
+              % (vials_processed, total_stubs))
+
+        ## Write *.tracks.csv mirroring the *.filtered.csv naming convention
+        track_cols = [c for c in TRACK_COLUMNS + naming_cols
+                      if c in self.df_filtered.columns]
+        path_tracks = self.name_nosuffix + '.tracks.csv'
+        self.df_filtered[track_cols].to_csv(path_tracks, index=False)
+        print('                --> Saved:', path_tracks.split('/')[-1])
+        return
+
     def step_1(self, gui = False, grayscale = True):
         '''Crops and formats the video, previously loaded during detector initialization.
         ----
@@ -1322,6 +1432,10 @@ class detector(object):
         
         ## Convert vial assignments from float to int
         self.df_filtered['vial'] = self.df_filtered['vial'].astype('int')
+
+        #---- Per-fly trajectory linking (individual mode only) ----
+        if getattr(self, 'analysis_mode', 'cohort') == 'individual':
+            self.link_trajectories()
 
         #----FNG detection (per vial) ----
         self.compute_fng()

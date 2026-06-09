@@ -66,6 +66,8 @@ class FreeClimber(object):
             'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
             'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
             'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
+            'analysis_mode', 'link_search_range', 'link_memory',
+            'link_predictor', 'link_min_track_length',
         }
 
         ## Assign variables to the detector using explicit key-value parsing.

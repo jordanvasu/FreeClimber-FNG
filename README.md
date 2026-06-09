@@ -63,6 +63,39 @@ python FreeClimber_main.py --config_file ./example/example.cfg
 
 ---
 
+## Individual-fly tracking mode
+
+By default FreeClimber-FNG runs in **cohort mode**: it analyzes the mean
+position of all flies in a vial, exactly as the base FreeClimber platform does.
+An optional **individual mode** additionally links per-frame detections into
+per-fly trajectories using [TrackPy](http://soft-matter.github.io/trackpy/),
+including predictive linking (`trackpy.predict.NearestVelocityPredict`).
+
+Individual mode is opt-in and fully backward compatible — when `analysis_mode`
+is unset or `'cohort'`, output is byte-identical to previous behavior. To enable
+it, set `analysis_mode='individual'` in the configuration (`.cfg`) file. When
+enabled, a `<video>.tracks.csv` file is written alongside the other outputs
+containing the columns `particle, frame, t, vial, x, y` plus the naming-convention
+fields. Each vial is linked independently so particle IDs never swap across vials.
+
+The five new configuration keys (defaults shown) are:
+
+| Key | Default | Description |
+|---|---|---|
+| `analysis_mode` | `'cohort'` | `'cohort'` (mean-position analysis) or `'individual'` (per-fly linking) |
+| `link_search_range` | `15` | Maximum inter-frame displacement, in pixels |
+| `link_memory` | `3` | Frames a particle may be lost before it is treated as a new track |
+| `link_predictor` | `'nearest_velocity'` | `'nearest_velocity'` (predictive) or `'none'` (plain nearest-neighbor) |
+| `link_min_track_length` | `5` | Minimum track length, in frames; shorter tracks are dropped |
+
+All five keys are optional. Existing `.cfg` files that omit them keep working
+unchanged. See `example/example.cfg` for the keys as commented-out defaults.
+
+> **Note:** Individual mode is currently command-line only. GUI exposure is
+> deferred until linking is validated on real multi-fly data.
+
+---
+
 ## Repository Structure
 
 | File/Folder | Description |

@@ -274,6 +274,8 @@ The remaining three videos represent how an improvised rig might perform, in ord
 
 - The `<file_name.raw.csv>` output is also really useful for passing to `trackpy` for linking spots together into tracks. Read more on TrackPy particle __tracking__ [API](http://soft-matter.github.io/trackpy/v0.4.2/api.html). Briefly, the file can be loaded in and saved as `f`, which will seamlessly integrate into the `Step 3: Link features into particle trajectories` in the [TrackPy Walkthrough](http://soft-matter.github.io/trackpy/v0.4.2/tutorial/walkthrough.html).
 
+- FreeClimber-FNG can do this linking step automatically. When `analysis_mode='individual'` is set in the configuration (`.cfg`) file, the program links per-frame detections into per-fly trajectories and writes an additional `<file_name.tracks.csv>` output alongside `<file_name.filtered.csv>`. This file contains a `particle` column (the per-fly track ID) plus `frame, t, vial, x, y` and the naming-convention fields. Linking uses TrackPy's predictive linker; see the [TrackPy prediction tutorial](http://soft-matter.github.io/trackpy/v0.4.2/tutorial/prediction.html) for background on `NearestVelocityPredict`. When `analysis_mode` is unset or `'cohort'`, no `<file_name.tracks.csv>` is produced and output is unchanged.
+
 <h4>Table of variables</h4>
 
 |Variable name |	Data type |	Explanation|
