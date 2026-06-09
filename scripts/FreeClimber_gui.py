@@ -162,6 +162,27 @@ class main_gui(wx.Frame):
             if args.debug: print('    '+phrase)
             variables.append(phrase)
 
+        ## Step 6: per-fly trajectory analysis (linking + tortuosity/meandering).
+        ## Appended here (not via the index-sliced input_names/input_values lists)
+        ## so the fixed slicing above is left untouched. Tortuosity is gated on
+        ## individual mode in step_5, so checking it implies individual mode.
+        tortuosity = self.input_tortuosity_enabled.GetValue()
+        individual = self.input_analysis_individual.GetValue() or tortuosity
+        variables.append("analysis_mode=%s" % ("'individual'" if individual else "'cohort'"))
+        variables.append('tortuosity_enabled=%s' % str(tortuosity))
+        ## Linking + tortuosity numeric parameters (documented defaults; fine-tune
+        ## in the saved .cfg if needed). Written whenever the config is saved.
+        variables.append('link_search_range=15')
+        variables.append('link_memory=3')
+        variables.append("link_predictor='nearest_velocity'")
+        variables.append('link_min_track_length=5')
+        variables.append('tortuosity_smoothing_window=5')
+        variables.append('tortuosity_velocity_threshold=1.0')
+        variables.append('tortuosity_bout_min_frames=10')
+        variables.append('tortuosity_bout_min_displacement=2.0')
+        if args.debug:
+            print('    analysis_mode individual=%s, tortuosity_enabled=%s' % (individual, tortuosity))
+
         return variables
 
     def load_video(self):
@@ -728,9 +749,28 @@ class main_gui(wx.Frame):
               parent=self.panel1, pos=wx.Point(col5, 80), size=wx.Size(133, 22),
               style=0)
         self.input_vial_id_vars = wx.TextCtrl(id=wxID_input_vial_id_vars,
-              name=u'input_vial_id_vars', parent=self.panel1, pos=wx.Point(col5 + 130, 80), 
-              size=wx.Size(small_box_dimensions), style=0, value=u'2')  
-        
+              name=u'input_vial_id_vars', parent=self.panel1, pos=wx.Point(col5 + 130, 80),
+              size=wx.Size(small_box_dimensions), style=0, value=u'2')
+
+        ## Step 6: per-fly trajectory analysis (linking + tortuosity/meandering).
+        ## These two checkboxes write the analysis_mode / tortuosity_enabled keys
+        ## into the saved .cfg so the detector runs link_trajectories() and
+        ## compute_tortuosity() (both gated on individual mode in step_5).
+        self.text_step_6 = wx.StaticText(id=wx.ID_ANY,
+              label=u'Step 6: Trajectory analysis', name='text_step_6', parent=self.panel1,
+              pos=wx.Point(col5, 110),
+              size=wx.Size(190, 22), style=wx.ALIGN_LEFT)
+        self.input_analysis_individual = wx.CheckBox(id=wx.ID_ANY,
+              label=u'Individual mode (per-fly linking)', name=u'input_analysis_individual',
+              parent=self.panel1, pos=wx.Point(col5, 132), size=wx.Size(195, 22),
+              style=0)
+        self.input_analysis_individual.SetValue(False)
+        self.input_tortuosity_enabled = wx.CheckBox(id=wx.ID_ANY,
+              label=u'Tortuosity / meandering metrics', name=u'input_tortuosity_enabled',
+              parent=self.panel1, pos=wx.Point(col5, 154), size=wx.Size(195, 22),
+              style=0)
+        self.input_tortuosity_enabled.SetValue(False)
+
         self.text_path_project = wx.StaticText(id=wxID_text_path_project,
               label=u"Project path:", name='text_path_project',
               parent=self.panel1, pos=wx.Point(col4-45, 180), size=wx.Size(medium_box_dimensions),
