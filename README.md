@@ -61,6 +61,16 @@ pythonw ./scripts/FreeClimber_gui.py --video_file ./example/<video_file.suffix>
 python FreeClimber_main.py --config_file ./example/example.cfg
 ```
 
+### Per-folder vial count (`vials.txt`)
+
+A single shared `.cfg` can be reused across folders whose videos have different
+vial counts. Drop a plain-text file named `vials.txt` into a folder containing
+just the integer count (e.g. `3`), and it overrides the `vials` value in the
+`.cfg` for every video in that folder. Accepted contents: the first non-blank,
+non-`#`-comment line as a bare integer (`3`) or `vials=3` / `vials: 3`. A
+missing or unparseable file leaves the `.cfg` value unchanged, so batch runs
+never break.
+
 ---
 
 ## Individual-fly tracking mode
