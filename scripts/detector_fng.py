@@ -67,6 +67,10 @@ class detector(object):
             self.load_for_gui(variables = variables)
         elif  not gui:
             self.load_for_main(config_file = config_file)
+            ## Per-folder override: a 'vials.txt' beside the video takes
+            ## precedence over the cfg's 'vials' (batch convenience for
+            ## folders whose videos have a different vial count).
+            self.apply_vials_sidecar(video_file)
         self.check_variable_formats()
 
         ## Setting a color map
@@ -190,9 +194,54 @@ class detector(object):
             return
 
         ## Exit program if issue with the configuration file
-        except: 
+        except:
             print('\n\nExiting program. Could not read in file.cfg, but path and suffix are good--likely a formatting issue')
             raise SystemExit
+        return
+
+    def apply_vials_sidecar(self, video_file):
+        '''Override self.vials from a per-folder sidecar file, if present.
+
+        Looks for a file named 'vials.txt' in the same folder as the video. This
+        lets a single shared .cfg be reused across folders whose videos have
+        different vial counts (e.g. 3 or 4 instead of 5): drop a 'vials.txt'
+        containing the integer count into the folder and it takes precedence
+        over the 'vials' value in the .cfg for every video in that folder.
+
+        Accepted contents: the first non-blank, non-'#'-comment line, as a bare
+        integer ('3') or 'vials=3' / 'vials: 3'. A missing or unparseable file
+        leaves self.vials unchanged so the batch never breaks.
+        ----
+        Inputs:
+          video_file (str): Video file path
+        ----
+        Returns:
+          None -- updates self.vials in place when a valid sidecar is found'''
+        if self.debug: print('detector.apply_vials_sidecar')
+
+        sidecar = os.path.join(os.path.split(video_file)[0], 'vials.txt')
+        if not os.path.isfile(sidecar):
+            return
+
+        try:
+            with open(sidecar) as f:
+                lines = [ln.strip() for ln in f]
+            value = None
+            for ln in lines:
+                if ln == '' or ln.startswith('#'):
+                    continue
+                for sep in ('=', ':'):
+                    if sep in ln:
+                        ln = ln.split(sep, 1)[1].strip()
+                value = int(ln)
+                break
+            if value is None:
+                print('!! vials.txt found but empty, keeping cfg vials = %s :: %s' % (self.vials, sidecar))
+                return
+            print('-- vials.txt override: vials %s -> %s :: %s' % (self.vials, value, sidecar))
+            self.vials = value
+        except (ValueError, OSError) as e:
+            print('!! Could not parse vials.txt (%s), keeping cfg vials = %s :: %s' % (e, self.vials, sidecar))
         return
 
     ## Checking video path is valid
