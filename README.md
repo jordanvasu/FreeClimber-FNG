@@ -12,6 +12,8 @@ The following capabilities were added by Jordan Vasu (2025):
 
 - **FNG detection** — automated identification of climb-to-fall transitions (failed negative geotaxis events) within climbing assay videos
 - **Fall distance measurement** — calculates the vertical distance between the position at fall initiation and the position at fall recovery; this metric captures the interval during which a fly falls and subsequently recovers, and can be interpreted as a proxy for fall severity
+- **Individual-fly tracking mode** — an optional mode that links per-frame detections into per-fly trajectories using [TrackPy](http://soft-matter.github.io/trackpy/) (including predictive linking), in addition to the default cohort (mean-position) analysis
+- **Per-fly tortuosity / meandering metrics** — when individual mode is enabled, computes path tortuosity, straightness, and mean turning angle per fly per climbing bout, quantifying how directly (or erratically) each fly climbs
 
 These additions are implemented in `detector_fng.py` and are designed to integrate with the existing FreeClimber parameter configuration and batch processing workflow.
 
