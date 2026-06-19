@@ -50,7 +50,8 @@ PEAK_TOL = 5  # ±5 frames
 # ---------------------------------------------------------------------------
 def _bind_methods(det: types.SimpleNamespace) -> types.SimpleNamespace:
     """Bind the detector instance methods needed by compute_fng onto a SimpleNamespace."""
-    for name in ("_height_traces", "_detect_fng_series", "compute_fng"):
+    for name in ("_height_traces", "_detect_fng_series", "compute_fng",
+                 "_vial_label", "_relabel_vial_col"):
         setattr(det, name, types.MethodType(getattr(dfng.detector, name), det))
     return det
 

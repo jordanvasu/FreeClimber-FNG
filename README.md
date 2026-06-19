@@ -68,10 +68,30 @@ python FreeClimber_main.py --config_file ./example/example.cfg
 A single shared `.cfg` can be reused across folders whose videos have different
 vial counts. Drop a plain-text file named `vials.txt` into a folder containing
 just the integer count (e.g. `3`), and it overrides the `vials` value in the
-`.cfg` for every video in that folder. Accepted contents: the first non-blank,
+`.cfg` for every video in that folder. Accepted contents: a non-blank,
 non-`#`-comment line as a bare integer (`3`) or `vials=3` / `vials: 3`. A
 missing or unparseable file leaves the `.cfg` value unchanged, so batch runs
 never break.
+
+#### Naming the surviving vials (`id =`)
+
+When only some vials remain in a video — say the set `b31-35` was reduced to
+just vials 33, 34 and 35 — add an `id =` line listing which physical vials are
+present, left to right:
+
+```
+id = 33, 34, 35
+```
+
+These IDs label the vials in every per-vial output (the `vial_ID` in
+`*.slopes.csv`/`results.csv`, and the `vial` column of `*.fng.csv`,
+`*.tracks.csv` and the tortuosity CSVs) instead of the default positional
+`1, 2, 3`. The vial count is taken from how many IDs are listed, so the `id =`
+line alone is enough — a separate count line is optional, and if it disagrees
+with the number of IDs the ID count wins. Accepted separators are `=` or `:`,
+the key may be `id` or `ids`, and non-numeric labels are allowed too. The vials
+are still detected by their left-to-right position in the frame, so list the IDs
+in that same left-to-right order.
 
 ---
 

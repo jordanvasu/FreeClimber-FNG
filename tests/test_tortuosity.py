@@ -380,7 +380,9 @@ import detector_fng as dfng  # noqa: E402
 
 
 def _bind(det, *names):
-    for name in names:
+    # Always bind the output relabeling helpers: every CSV-writing method now
+    # passes its frame through _relabel_vial_col (which calls _vial_label).
+    for name in tuple(names) + ("_vial_label", "_relabel_vial_col"):
         setattr(det, name, types.MethodType(getattr(dfng.detector, name), det))
     return det
 

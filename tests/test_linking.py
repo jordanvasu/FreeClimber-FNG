@@ -54,7 +54,9 @@ skip_no_data = pytest.mark.skipif(
 # ---------------------------------------------------------------------------
 def _bind(det, *names):
     """Bind the named detector methods onto a SimpleNamespace instance."""
-    for name in names:
+    # Always bind the output relabeling helpers: every CSV-writing method now
+    # passes its frame through _relabel_vial_col (which calls _vial_label).
+    for name in tuple(names) + ("_vial_label", "_relabel_vial_col"):
         setattr(det, name, types.MethodType(getattr(dfng.detector, name), det))
     return det
 

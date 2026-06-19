@@ -58,7 +58,11 @@ class detector(object):
         '''
         self.debug = debug
         if self.debug: print('detector.__init__')
-        
+
+        ## Physical vial IDs, populated only from a vials.txt 'id =' line
+        ## (see apply_vials_sidecar). None means "label vials by position".
+        self.vial_labels = None
+
         self.config_file = config_file
         self.video_file = self.check_video(video_file)
         
@@ -200,7 +204,8 @@ class detector(object):
         return
 
     def apply_vials_sidecar(self, video_file):
-        '''Override self.vials from a per-folder sidecar file, if present.
+        '''Override self.vials (and optionally the vial IDs) from a per-folder
+        sidecar file, if present.
 
         Looks for a file named 'vials.txt' in the same folder as the video. This
         lets a single shared .cfg be reused across folders whose videos have
@@ -208,15 +213,25 @@ class detector(object):
         containing the integer count into the folder and it takes precedence
         over the 'vials' value in the .cfg for every video in that folder.
 
-        Accepted contents: the first non-blank, non-'#'-comment line, as a bare
-        integer ('3') or 'vials=3' / 'vials: 3'. A missing or unparseable file
-        leaves self.vials unchanged so the batch never breaks.
+        Accepted contents (each on its own line, '#'-comment lines ignored):
+          * A vial count, as a bare integer ('3') or 'vials=3' / 'vials: 3'.
+          * An optional ID line naming which physical vials remain, left to
+            right, as comma-separated values: 'id = 33, 34, 35' (also accepts
+            'ids', and ':' instead of '='). When present, these IDs label the
+            vials in every per-vial output (slopes/fng/tracks/tortuosity) and
+            the count is taken from how many IDs are listed -- so an 'id' line
+            alone is enough; a separate count line is optional and, if it
+            disagrees, the ID count wins.
+
+        A missing or unparseable file leaves self.vials unchanged so the batch
+        never breaks.
         ----
         Inputs:
           video_file (str): Video file path
         ----
         Returns:
-          None -- updates self.vials in place when a valid sidecar is found'''
+          None -- updates self.vials (and self.vial_labels) in place when a
+                  valid sidecar is found'''
         if self.debug: print('detector.apply_vials_sidecar')
 
         sidecar = os.path.join(os.path.split(video_file)[0], 'vials.txt')
@@ -226,23 +241,93 @@ class detector(object):
         try:
             with open(sidecar) as f:
                 lines = [ln.strip() for ln in f]
-            value = None
+            count = None
+            labels = None
             for ln in lines:
                 if ln == '' or ln.startswith('#'):
                     continue
+
+                ## Identify the key (if any) so 'id'/'ids' lines are routed to
+                ## the label parser and everything else is treated as a count.
+                key = ''
+                value_str = ln
                 for sep in ('=', ':'):
                     if sep in ln:
-                        ln = ln.split(sep, 1)[1].strip()
-                value = int(ln)
-                break
-            if value is None:
+                        key, _, value_str = ln.partition(sep)
+                        key = key.strip().lower()
+                        value_str = value_str.strip()
+                        break
+
+                if key in ('id', 'ids'):
+                    labels = self._parse_vial_labels(value_str)
+                elif count is None:
+                    count = int(value_str)
+
+            if labels:
+                ## IDs are authoritative for the count: a video that kept only
+                ## vials 33-35 has exactly len(labels) vials regardless of any
+                ## (possibly stale) count line.
+                if count is not None and count != len(labels):
+                    print('!! vials.txt: count (%s) disagrees with %s id(s); using id count :: %s'
+                          % (count, len(labels), sidecar))
+                self.vial_labels = labels
+                print('-- vials.txt override: vials %s -> %s, ids = %s :: %s'
+                      % (self.vials, len(labels), labels, sidecar))
+                self.vials = len(labels)
+            elif count is not None:
+                print('-- vials.txt override: vials %s -> %s :: %s' % (self.vials, count, sidecar))
+                self.vials = count
+            else:
                 print('!! vials.txt found but empty, keeping cfg vials = %s :: %s' % (self.vials, sidecar))
-                return
-            print('-- vials.txt override: vials %s -> %s :: %s' % (self.vials, value, sidecar))
-            self.vials = value
         except (ValueError, OSError) as e:
             print('!! Could not parse vials.txt (%s), keeping cfg vials = %s :: %s' % (e, self.vials, sidecar))
         return
+
+    @staticmethod
+    def _parse_vial_labels(value_str):
+        '''Parse the comma-separated values of a vials.txt 'id =' line into a
+        list of vial labels. Numeric entries are kept as ints (so they sort and
+        print like vial numbers); any non-numeric entry is kept as a string.
+        Returns None when nothing parseable is present.'''
+        items = [tok.strip() for tok in value_str.split(',') if tok.strip() != '']
+        if not items:
+            return None
+        labels = []
+        for tok in items:
+            try:
+                labels.append(int(tok))
+            except ValueError:
+                labels.append(tok)
+        return labels
+
+    def _vial_label(self, v):
+        '''Translate a positional vial index (1..self.vials) into the physical
+        vial ID supplied via a vials.txt 'id =' line, when present. Returns the
+        input unchanged when no labels are configured or the index is out of
+        range (e.g. the 'all' cohort aggregate).'''
+        labels = getattr(self, 'vial_labels', None)
+        if labels:
+            try:
+                iv = int(v)
+            except (TypeError, ValueError):
+                return v
+            if 1 <= iv <= len(labels):
+                return labels[iv - 1]
+        return v
+
+    def _relabel_vial_col(self, df):
+        '''Return a copy of df whose 'vial' column is translated to physical
+        vial IDs (see _vial_label), for writing user-facing CSVs. No-op (returns
+        df unchanged) when no labels are configured or df has no 'vial' column,
+        so the internal positional numbering used for binning/plotting is never
+        disturbed.'''
+        if not getattr(self, 'vial_labels', None):
+            return df
+        if 'vial' not in getattr(df, 'columns', []):
+            return df
+        out = df.copy()
+        out['vial'] = out['vial'].map(self._vial_label)
+        return out
 
     ## Checking video path is valid
     def check_video(self,video_file=None):
@@ -845,8 +930,8 @@ class detector(object):
             
                 ## Add vial_ID to the result
                 if i == self.vials + 1: v = 'all'
-                else: v = i
-                
+                else: v = self._vial_label(i)
+
                 ## Name vial_ID
                 vial_ID = ['_'.join(self.vial_ID) + '_'+ str(v)]
                 self.result[i] = vial_ID + self.result[i]
@@ -1212,12 +1297,12 @@ class detector(object):
                     .reset_index())
         self.df_fng_counts = counts
 
-        # Save per-event csv
+        # Save per-event csv (vial column relabeled to physical IDs if configured)
         path_fng = self.name_nosuffix + '.fng.csv'
         if self.df_fng.empty:
             pd.DataFrame(columns=FNG_COLUMNS).to_csv(path_fng, index=False)
         else:
-            self.df_fng.to_csv(path_fng, index=False)
+            self._relabel_vial_col(self.df_fng).to_csv(path_fng, index=False)
         print('                --> Saved:', path_fng.split('/')[-1])
 
     def compute_tortuosity(self):
@@ -1291,8 +1376,8 @@ class detector(object):
 
         path_bouts = self.name_nosuffix + '.tortuosity_bouts.csv'
         path_particle = self.name_nosuffix + '.tortuosity_particle.csv'
-        self.df_tortuosity_bouts.to_csv(path_bouts, index=False)
-        self.df_tortuosity_particle.to_csv(path_particle, index=False)
+        self._relabel_vial_col(self.df_tortuosity_bouts).to_csv(path_bouts, index=False)
+        self._relabel_vial_col(self.df_tortuosity_particle).to_csv(path_particle, index=False)
         print('                --> Saved:', path_bouts.split('/')[-1])
         print('                --> Saved:', path_particle.split('/')[-1])
         return
@@ -1400,7 +1485,7 @@ class detector(object):
         track_cols = [c for c in TRACK_COLUMNS + naming_cols
                       if c in self.df_filtered.columns]
         path_tracks = self.name_nosuffix + '.tracks.csv'
-        self.df_filtered[track_cols].to_csv(path_tracks, index=False)
+        self._relabel_vial_col(self.df_filtered[track_cols]).to_csv(path_tracks, index=False)
         print('                --> Saved:', path_tracks.split('/')[-1])
         return
 
