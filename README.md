@@ -192,7 +192,7 @@ No video decoding or FFmpeg is required — the test operates on the pre-compute
 If you use FreeClimber-FNG in your research, please cite both this tool and the original FreeClimber platform:
 
 **FreeClimber-FNG:**
-> Vasu, J. (2025). FreeClimber-FNG: Automated detection of failed negative geotaxis and fall distance in *Drosophila* climbing assays. *Journal of Open Source Software* (under review).
+> Vasu, J. (2026). FreeClimber-FNG (v1.0.4). Zenodo. https://doi.org/10.5281/zenodo.18090957
 
 **Original FreeClimber:**
 > Spierer, A. N., Zhuo, L., Zhu, C. T., & Rand, D. M. (2020). FreeClimber: Automated quantification of climbing performance in *Drosophila*. *Journal of Experimental Biology*, 223, jeb229377. https://doi.org/10.1242/jeb.229377
