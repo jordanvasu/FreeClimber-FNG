@@ -33,6 +33,69 @@ import tortuosity as _tortuosity
 ## Issue with 'SettingWithCopyWarning' in step_3
 pd.options.mode.chained_assignment = None  # default='warn'
 
+## Recognised configuration keys (allowlist), shared by the GUI loader, the
+## command-line loader and FreeClimber_main so the three can never drift apart.
+CONFIG_KEYS = frozenset({
+    'x', 'y', 'w', 'h', 'check_frame', 'blank_0', 'blank_n',
+    'crop_0', 'crop_n', 'threshold', 'diameter', 'minmass',
+    'maxsize', 'ecc_low', 'ecc_high', 'vials', 'window',
+    'pixel_to_cm', 'frame_rate', 'vial_id_vars', 'outlier_TB',
+    'outlier_LR', 'naming_convention', 'path_project',
+    'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
+    'floor_y', 'background_image', 'flies_per_vial',
+    'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
+    'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
+    'fng_min_range_cm',
+    'ftc_enabled', 'ftc_height_cm', 'ftc_window_sec', 'ftc_start_frame',
+    'ftc_eval_frames', 'ftc_min_coverage',
+    'analysis_mode', 'link_search_range', 'link_memory',
+    'link_predictor', 'link_min_track_length',
+    'tortuosity_enabled', 'tortuosity_smoothing_window',
+    'tortuosity_velocity_threshold', 'tortuosity_bout_min_frames',
+    'tortuosity_bout_min_displacement',
+})
+
+## Keys holding file-system paths. Their values are taken verbatim (quotes
+## stripped) instead of through ast.literal_eval, which would silently turn
+## Windows backslashes into escape characters (e.g. '\t' in 'D:\test').
+PATH_KEYS = frozenset({'path_project', 'background_image'})
+
+## Column layout of <video>.ftc.csv (per vial) and <video>.ftc_particle.csv
+FTC_COLUMNS = ['vial', 'ftc_height_cm', 'window_start_frame', 'window_end_frame',
+               'window_sec', 'n_expected', 'n_detected_start', 'n_detected_end',
+               'n_detected_max', 'n_reached_line', 'n_above_line_end',
+               'ftc_count', 'ftc_fraction', 'method', 'count_warning',
+               'n_tracks_climber', 'n_tracks_fng', 'n_tracks_ftc', 'n_tracks_unscored']
+FTC_PARTICLE_COLUMNS = ['vial', 'particle', 'first_frame', 'last_frame', 'coverage',
+                        'start_height_cm', 'max_height_cm', 'reached_line',
+                        'latency_sec', 'n_falls', 'outcome']
+
+
+def parse_config_line(item):
+    '''Parse one 'key=value' configuration line.
+    ----
+    Inputs:
+      item (str): A single line from a .cfg file or the GUI variable list
+    ----
+    Returns:
+      (key, value) for a recognised key, or None if the line should be ignored.
+      Raises ValueError when a recognised key has an unparseable value.'''
+    if '=' not in item:
+        return None
+    key, _, val_str = item.partition('=')
+    key = key.strip()
+    if key not in CONFIG_KEYS:
+        return None
+    val_str = val_str.strip()
+    if key in PATH_KEYS:
+        if val_str in ('None', ''):
+            return key, None
+        return key, val_str.strip('"').strip("'")
+    try:
+        return key, ast.literal_eval(val_str)
+    except (ValueError, SyntaxError):
+        raise ValueError('could not parse value for %s: %s' % (key, val_str))
+
 class detector(object):
     '''Particle detection platform for identifying the group climbing velocity of a 
     group of flies (or particles) in a Drosophila negative geotaxis (climbing) assay.
@@ -107,43 +170,24 @@ class detector(object):
             print('\n\nExiting program. No variable list loaded')
             raise SystemExit
         
-        ALLOWED_KEYS = {
-            'x', 'y', 'w', 'h', 'check_frame', 'blank_0', 'blank_n',
-            'crop_0', 'crop_n', 'threshold', 'diameter', 'minmass',
-            'maxsize', 'ecc_low', 'ecc_high', 'vials', 'window',
-            'pixel_to_cm', 'frame_rate', 'vial_id_vars', 'outlier_TB',
-            'outlier_LR', 'naming_convention', 'path_project',
-            'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
-            'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
-            'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
-            'analysis_mode', 'link_search_range', 'link_memory',
-            'link_predictor', 'link_min_track_length',
-            'tortuosity_enabled', 'tortuosity_smoothing_window',
-            'tortuosity_velocity_threshold', 'tortuosity_bout_min_frames',
-            'tortuosity_bout_min_displacement',
-        }
-
         ## Pass imported variables to the detector object
         if self.debug: print('detector.load_for_gui: --------variables--------')
         for item in variables:
             if self.debug: print('detector.load_for_gui:', item)
-            if not item.startswith((' ', '\t', '\n')):
-                if '=' not in item:
-                    continue
-                key, _, val_str = item.partition('=')
-                key = key.strip()
-                if key not in ALLOWED_KEYS:
-                    continue
-                try:
-                    setattr(self, key, ast.literal_eval(val_str.strip()))
-                except Exception:
-                    ## ast.literal_eval rejects Windows paths (backslash escape
-                    ## sequences, e.g. \\U in C:\\Users) and other non-literal
-                    ## strings; fall back to the raw value with any surrounding
-                    ## quotes stripped rather than dropping the key.
-                    setattr(self, key, val_str.strip().strip('"').strip("'"))
-                    if self.debug:
-                        print('detector.load_for_gui: kept ( %s ) as raw string' % item)
+            if item.startswith((' ', '\t', '\n')):
+                continue
+            try:
+                parsed = parse_config_line(item)
+            except ValueError:
+                ## Non-literal values (e.g. an empty text box) fall back to the
+                ## raw string with any surrounding quotes stripped rather than
+                ## dropping the key.
+                key = item.partition('=')[0].strip()
+                parsed = (key, item.partition('=')[2].strip().strip('"').strip("'"))
+                if self.debug:
+                    print('detector.load_for_gui: kept ( %s ) as raw string' % item)
+            if parsed is not None:
+                setattr(self, parsed[0], parsed[1])
         return
         
     def load_for_main(self, config_file = None):
@@ -162,22 +206,6 @@ class detector(object):
             with open(config_file,'r') as f:
                 variables = f.readlines()
             f.close()
-            
-            ALLOWED_KEYS = {
-                'x', 'y', 'w', 'h', 'check_frame', 'blank_0', 'blank_n',
-                'crop_0', 'crop_n', 'threshold', 'diameter', 'minmass',
-                'maxsize', 'ecc_low', 'ecc_high', 'vials', 'window',
-                'pixel_to_cm', 'frame_rate', 'vial_id_vars', 'outlier_TB',
-                'outlier_LR', 'naming_convention', 'path_project',
-                'file_suffix', 'convert_to_cm_sec', 'trim_outliers',
-                'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
-                'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
-                'analysis_mode', 'link_search_range', 'link_memory',
-                'link_predictor', 'link_min_track_length',
-                'tortuosity_enabled', 'tortuosity_smoothing_window',
-                'tortuosity_velocity_threshold', 'tortuosity_bout_min_frames',
-                'tortuosity_bout_min_displacement',
-            }
 
             ## Filter, format, and import variables to detector object
             if self.debug: print('detector.load_for_main:  --------variables--------')
@@ -185,16 +213,13 @@ class detector(object):
 
             for item in variables:
                 if self.debug: print('detector.load_for_main:', item)
-                if '=' not in item:
-                    continue
-                key, _, val_str = item.partition('=')
-                key = key.strip()
-                if key not in ALLOWED_KEYS:
-                    continue
                 try:
-                    setattr(self, key, ast.literal_eval(val_str.strip()))
-                except Exception:
+                    parsed = parse_config_line(item)
+                except ValueError:
                     print('detector.load_for_main: !! Could not import ( %s )' % item)
+                    continue
+                if parsed is not None:
+                    setattr(self, parsed[0], parsed[1])
             return
 
         ## Exit program if issue with the configuration file
@@ -221,7 +246,12 @@ class detector(object):
             vials in every per-vial output (slopes/fng/tracks/tortuosity) and
             the count is taken from how many IDs are listed -- so an 'id' line
             alone is enough; a separate count line is optional and, if it
-            disagrees, the ID count wins.
+            disagrees, the ID count wins. A bare comma-separated list with no
+            key ('33, 34, 35') is also read as an ID line.
+          * An optional fly-count line giving how many flies were loaded into
+            each vial, left to right: 'n = 10, 10, 9' (also 'flies'). A single
+            value applies to every vial. Used by the failure-to-climb measure
+            (see compute_ftc) and overrides the cfg 'flies_per_vial'.
 
         A missing or unparseable file leaves self.vials unchanged so the batch
         never breaks.
@@ -258,8 +288,14 @@ class detector(object):
                         value_str = value_str.strip()
                         break
 
-                if key in ('id', 'ids'):
+                if key in ('id', 'ids') or (key == '' and ',' in value_str):
                     labels = self._parse_vial_labels(value_str)
+                elif key in ('n', 'flies'):
+                    flies = [int(tok) for tok in value_str.split(',') if tok.strip() != '']
+                    if flies:
+                        self.flies_per_vial = flies[0] if len(flies) == 1 else flies
+                        print('-- vials.txt: flies per vial = %s :: %s'
+                              % (self.flies_per_vial, sidecar))
                 elif count is None:
                     count = int(value_str)
 
@@ -359,9 +395,11 @@ class detector(object):
         if self.debug: print('detector.specify_paths_details')
         
         ## Set file and path names
+        ## splitext handles any extension length (.h264, .mov, .mp4, ...);
+        ## the old name[:-5] slice truncated names with 3-letter extensions.
         folder,name = os.path.split(video_file)
-        self.name = name[:-5]
-        self.name_nosuffix = '.'.join(video_file.split('.')[:-1])
+        self.name = os.path.splitext(name)[0]
+        self.name_nosuffix = os.path.splitext(video_file)[0]
         
         ## Defining final file names and destinations
         file_names = ['data','filtered','diagnostic','slope']
@@ -380,7 +418,6 @@ class detector(object):
         ## Extracting file details and naming individual vials
         self.file_details = dict(zip(self.naming_convention.split('_'),self.name.split('_')))
         self.experiment_details = self.name.split('_')
-        self.experiment_details[-1] = '.'.join(self.experiment_details[-1].split('.')[:-1])
         self.vial_ID = self.experiment_details[:self.vial_id_vars]
         
         ## Creating a list of colors for plotting
@@ -414,10 +451,14 @@ class detector(object):
         if self.blank_n > self.crop_n:
             self.blank_n = self.crop_n
 
-        ## Window size vs. frames to test
+        ## Window size vs. frames to test. Must stay an integer: it is used as a
+        ## frame count in range() by local_linear_regression.
         if (self.crop_n - self.crop_0) < self.window:
-#             print('!! Issue with window size (%s) being greater than frames (%s). Window size set to 80 percent of desired frames (%s)' %(self.window,self.crop_n - self.crop_0,(.8 * (self.crop_n - self.crop_0))))
-            self.window = (self.crop_n - self.crop_0) * 0.8
+            new_window = max(2, int((self.crop_n - self.crop_0) * 0.8))
+            if self.crop_n > self.crop_0: print('!! Issue with window size (%s) > frames (%s): now %s'
+                  % (self.window, self.crop_n - self.crop_0, new_window))
+            self.window = new_window
+        self.window = int(self.window)
 		
 		## blank vs. crop frames
         if self.blank_0 < self.crop_0:
@@ -431,9 +472,9 @@ class detector(object):
         if self.check_frame < self.crop_0:
 #             print('!! Issue with check_frame < crop_0 (min. cropped frame). Now, check_frame = crop_0 = %s' %self.check_frame)
             self.check_frame = self.crop_0
-        if self.check_frame > self.crop_n:
-#             print('!! Issue with check_frame > crop_n (max cropped frame). Now, check_frame = crop_n = %s' %self.check_frame)
-            self.check_frame = self.crop_n
+        ## crop_n is exclusive (frames crop_0 .. crop_n-1 are kept)
+        if self.check_frame > self.crop_n - 1:
+            self.check_frame = max(self.crop_0, self.crop_n - 1)
         return
 
     ## Video processing functions
@@ -459,10 +500,20 @@ class detector(object):
             video_info = next(x for x in probe['streams'] if x['codec_type'] == 'video')
             self.width = int(video_info['width'])
             self.height = int(video_info['height'])
-        except:
+            ## Native frame rate (e.g. '30/1' or '30000/1001'); reported by the
+            ## GUI so frame_rate is not left at a wrong default.
+            try:
+                num, _, den = video_info.get('r_frame_rate', '0/1').partition('/')
+                self.video_fps = float(num) / float(den or 1)
+            except (ValueError, ZeroDivisionError):
+                self.video_fps = None
+        except SystemExit:
+            raise
+        except Exception:
             print('!! Could not read in video file metadata')
-        
-        ## Converting video to nd-array    
+            raise SystemExit
+
+        ## Converting video to nd-array
         try:
             out,err = (ffmpeg
                        .input(file)
@@ -470,10 +521,50 @@ class detector(object):
                        .run(capture_stdout=True))
             self.n_frames = int(len(out)/self.height/self.width/3)
             image_stack = np.frombuffer(out, np.uint8).reshape([-1, self.height, self.width, 3])
-        except:
-            print('!! Could not read in video file to an array. Error message (if any):', err)
+        except Exception as e:
+            print('!! Could not read in video file to an array:', e)
+            raise SystemExit
 
         return image_stack
+
+    def load_background_image(self, path):
+        '''Load a reference image of the empty vials to use as the null background,
+        cropped and grayscaled exactly like the video.
+
+        Why: the default background is the median of the blank_0..blank_n frames,
+        so a fly that stays in one place for most of those frames becomes part of
+        the background and is subtracted away. Flies that fail to climb are
+        exactly those flies, so the failure-to-climb measure needs a background
+        taken without flies in the vials.
+        ----
+        Inputs:
+          path (str): Image (png/jpg/tif...) or video file; its first frame is used
+        ----
+        Returns:
+          background (array) of shape (h, w), or None if it cannot be used'''
+        if self.debug: print('detector.load_background_image')
+        if not os.path.isfile(path):
+            print('!! background_image not found, using median of blank frames :: %s' % path)
+            return None
+        try:
+            out, _ = (ffmpeg.input(path)
+                      .output('pipe:', format='rawvideo', pix_fmt='rgb24', vframes=1)
+                      .run(capture_stdout=True, quiet=True))
+            frame = np.frombuffer(out, np.uint8)
+            if frame.size != self.width * self.height * 3:
+                print('!! background_image size does not match the video (%sx%s); '
+                      'using median of blank frames :: %s' % (self.width, self.height, path))
+                return None
+            frame = frame.reshape([1, self.height, self.width, 3])
+        except Exception as e:
+            print('!! Could not read background_image (%s); using median of blank frames' % e)
+            return None
+        x, y = int(self.x), int(self.y)
+        cropped = self.crop_and_grayscale(frame, x=x, x_max=int(x + self.w),
+                                          y=y, y_max=int(y + self.h),
+                                          first_frame=0, last_frame=1)
+        print('-- Using background_image :: %s' % path)
+        return cropped[0]
 
     def crop_and_grayscale(self,video_array,
                          x = 0 ,x_max = None,
@@ -539,8 +630,18 @@ class detector(object):
         first_frame = self.blank_0
         last_frame = self.blank_n
                     
-        ## Generating a null background image as the median pixel intensity across frames
-        background = np.median(video_array[first_frame:last_frame,:,:].astype(float), axis=0).astype(int)
+        ## Use a reference image of the empty vials when one is configured,
+        ## otherwise the median pixel intensity across the blank frames.
+        ## blank_0/blank_n are absolute video frames; video_array starts at crop_0.
+        background = None
+        if getattr(self, 'background_image', None):
+            background = self.load_background_image(self.background_image)
+        if background is not None:
+            background = background.astype(int)
+        else:
+            first_frame -= self.crop_0
+            last_frame -= self.crop_0
+            background = np.median(video_array[first_frame:last_frame,:,:].astype(float), axis=0).astype(int)
         if self.debug: print('detector.subtract_background: dimensions:', background.shape)
         
         ## Subtracting the null background image from each individual frame
@@ -884,18 +985,54 @@ class detector(object):
 
     def invert_y(self,spots):
         '''Inverts spots along the y-axis. Important for converting spots indexed for an image to a plot.
+
+        The result is height above a FIXED floor, so heights are comparable across
+        videos and can be tested against an absolute line (failure to climb):
+        the vial floor is 'floor_y' (pixels from the top of the ROI) when set,
+        otherwise the bottom edge of the ROI (h). Previously the reference was
+        the lowest detection in each video, which moved from video to video.
         ----
         Inputs:
           spots (DataFrame): DataFrame containing a 'y' column
         ----
         Returns:
-          inv_y (list): In-place list of the y-coordinates inverted'''
+          inv_y (Series): height above the floor, in pixels'''
         if self.debug: print('detector.invert_y')
-        
-        ## Inverts y-axis
-        inv_y = abs(spots.y - spots.y.max())
-        return inv_y
-    
+
+        floor = self._floor_px()
+        if floor is None:
+            return abs(spots.y - spots.y.max())
+        return float(floor) - spots.y
+
+    def _floor_px(self):
+        '''Vial floor in pixels from the top of the ROI: 'floor_y' when set,
+        otherwise the bottom edge of the ROI (h, or less when the ROI runs past
+        the bottom of the frame). None when neither is known.'''
+        floor = getattr(self, 'floor_y', None)
+        if floor is None:
+            floor = getattr(self, 'h', None)
+            height = getattr(self, 'height', None)
+            if floor is not None and height is not None:
+                floor = min(floor, height - getattr(self, 'y', 0))
+        return floor
+
+    def _ftc_line_px(self):
+        '''Failure-to-climb line as a height above the floor, in pixels.
+
+        'ftc_height_cm' when set. Otherwise the line is the top of the drawn
+        ROI box, less one spot 'diameter': TrackPy drops spots centred closer
+        than that to the image edge, so a fly exactly at the top edge could
+        never be detected crossing it. Falls back to 2 cm when the ROI is
+        unknown.'''
+        height_cm = getattr(self, 'ftc_height_cm', None)
+        pixel_to_cm = float(getattr(self, 'pixel_to_cm', 1.0) or 1.0)
+        if height_cm not in (None, ''):
+            return float(height_cm) * pixel_to_cm
+        floor = self._floor_px()
+        if floor is None:
+            return 2.0 * pixel_to_cm
+        return max(0.0, float(floor) - float(getattr(self, 'diameter', 0) or 0))
+
     def get_slopes(self):
         '''Creates a dictionary with keys for vials and values for the DataFrame sliced by
         vial. It will also calculate the local linear regression for each vial and
@@ -920,27 +1057,29 @@ class detector(object):
 
         ## Slicing DataFrame (df.filtered) by vial and assigning slices to dictionary keys (vials)
         for i in range(1,self.vials + 2):
-            try:
-                ## Set dict key to '1' if only 1 vial, otherwise set dict key to vial number
-                if self.vials == 1 or i == self.vials + 1: self.vial[i] = self.df_filtered
-                else: self.vial[i] = self.df_filtered[self.df_filtered.vial==i]
-            
-                ## Setting the result to the result from the local linear regression
-                self.result[i] = self.local_linear_regression(self.vial[i]).iloc[0].tolist()
-            
-                ## Add vial_ID to the result
-                if i == self.vials + 1: v = 'all'
-                else: v = self._vial_label(i)
+            ## Set dict key to '1' if only 1 vial, otherwise set dict key to vial number
+            if self.vials == 1 or i == self.vials + 1: self.vial[i] = self.df_filtered
+            else: self.vial[i] = self.df_filtered[self.df_filtered.vial==i]
 
-                ## Name vial_ID
-                vial_ID = ['_'.join(self.vial_ID) + '_'+ str(v)]
-                self.result[i] = vial_ID + self.result[i]
-                
-                ## Rounding results so they are more manageable and require less space.
-                self.result[i][1:3] = [int(item) for item in self.result[i][1:3]]
-                self.result[i][3:] = [round(item,4) for item in self.result[i][3:]]
-            except:
-                print('Warning:: Could not process vial %s' % i)
+            ## Add vial_ID to the result
+            if i == self.vials + 1: v = 'all'
+            else: v = self._vial_label(i)
+            vial_ID = ['_'.join(self.vial_ID) + '_'+ str(v)]
+
+            ## Local linear regression. A vial with no usable detections (e.g.
+            ## every track dropped as a stub) gets a row of NaN rather than being
+            ## skipped, so every vial still appears in the slopes file and the
+            ## plotting code never meets a missing key.
+            _result = self.local_linear_regression(self.vial[i])
+            if _result.empty or pd.isnull(_result.iloc[0].first_frame):
+                print('Warning:: Could not process vial %s (no usable detections)' % v)
+                self.result[i] = vial_ID + [np.nan] * 7
+                continue
+            values = _result.iloc[0].tolist()
+
+            ## Rounding results so they are more manageable and require less space.
+            self.result[i] = (vial_ID + [int(item) for item in values[0:2]]
+                              + [round(item,4) for item in values[2:]])
         return
 
     def get_trim_lines(self,df,edge = 'top',sensitivity=1):
@@ -1051,9 +1190,9 @@ class detector(object):
         ## Defining empty variables
         result_list, result = [],pd.DataFrame()
         llr_columns = ['first_frame','last_frame','slope','intercept','r','pval','err']#,'count_llr','count_all']
-        
-        _count_all = np.median(df.groupby('frame').frame.count())
-        
+        if df.empty:
+            return pd.DataFrame(columns=llr_columns)
+
         ## Iterating through the window
         frames = (self.crop_n - self.crop_0) - self.window
         for i in range(frames):
@@ -1081,9 +1220,9 @@ class detector(object):
                 ## If slope is not significantly different from 0, then set slope = 0
                 if _result[-2] >= 0.05: _result[2] = 0
 
-            ## Have row of NaN if unable to process
-            except: _result = [start,stop] + [np.nan,np.nan,np.nan,np.nan]
-#             except: _result = [start,stop] + [np.nan,np.nan,np.nan,np.nan,np.nan,np.nan]
+            ## Have row of NaN if unable to process (one per regression column;
+            ## the old 4-NaN row made DataFrame construction fail outright)
+            except Exception: _result = [start,stop] + [np.nan] * (len(llr_columns) - 2)
 
             ## Add results list to a list of lists
             result_list.append(_result)
@@ -1091,11 +1230,12 @@ class detector(object):
         ## Assembles the list of lists into a DataFrame
         result = pd.DataFrame(data=result_list,columns=llr_columns)
 
-        ## Filtering method
+        ## Filtering method. Returns an empty (headered) DataFrame when no window
+        ## could be fitted; callers must check .empty before .iloc[0].
         if method == 'max_r': result = result[result.r == result.r.max()]
         elif method == 'min_err': result = result[result.err == result.err.min()]
         else: print("Unrecognized method, chose either 'max_r' to select the window with the greatest R or 'min_err' to select the window with the lowest error")
-        return result
+        return result.head(1)
 
     # ---------- FNG detection helpers ----------
     def _height_traces(self):
@@ -1127,14 +1267,23 @@ class detector(object):
         fall_thresh   = fall_thresh   if fall_thresh   is not None else getattr(self, 'fng_fall_thresh', 0.10)
         min_gap       = min_gap       if min_gap       is not None else getattr(self, 'fng_min_gap', 5)
 
+        # Frames where this vial has no detections are NaN (unstacked from all
+        # vials). Interpolate across interior gaps instead of back-filling them
+        # with a later height; only the ends are filled with the nearest value.
+        s = pd.Series(series).interpolate(limit_area='inside')
         # Smooth and keep length (centered rolling)
-        s = pd.Series(series).rolling(window=max(1, int(smooth_window)), center=True).mean().bfill().ffill()
+        s = s.rolling(window=max(1, int(smooth_window)), center=True).mean().bfill().ffill()
 
-        # Normalize 0..1 so thresholds are comparable across rigs
+        # Normalize 0..1 so thresholds are comparable across rigs. The range
+        # used is at least fng_min_range_cm: in a vial where nobody climbs the
+        # trace is only a few pixels of jitter, and stretching that to 0..1
+        # would let noise pass climb_thresh/fall_thresh as a fake fall.
         rng = (s.max() - s.min())
         if not pd.notnull(rng) or rng == 0:
             return []
-        n = (s - s.min()) / rng
+        min_range_px = (float(getattr(self, 'fng_min_range_cm', 2.0))
+                        * float(getattr(self, 'pixel_to_cm', 1.0)))
+        n = (s - s.min()) / max(rng, min_range_px)
         nv = n.values
 
         # Candidate peaks (tops of climbs)
@@ -1193,6 +1342,8 @@ class detector(object):
                 # Recovery detection: first run of 3+ consecutive frame-over-frame
                 # increases in the smoothed signal after the fall end.
                 # Search is bounded by the next detected peak (or end of series).
+                # NOTE: the cfg key fng_recovery_thresh is accepted for backward
+                # compatibility but is not used by this rule.
                 next_peaks = peaks[peaks > p]
                 recovery_bound = int(next_peaks[0]) if len(next_peaks) > 0 else len(nv)
 
@@ -1304,6 +1455,254 @@ class detector(object):
         else:
             self._relabel_vial_col(self.df_fng).to_csv(path_fng, index=False)
         print('                --> Saved:', path_fng.split('/')[-1])
+
+    def _flies_expected(self, vial):
+        '''Number of flies loaded into positional vial 'vial' (1-based), from
+        'flies_per_vial' (an int for every vial, or a left-to-right list; a
+        vials.txt 'n =' line sets it too). None when not configured.'''
+        flies = getattr(self, 'flies_per_vial', None)
+        if flies is None or flies == '':
+            return None
+        if isinstance(flies, (list, tuple)):
+            if 1 <= int(vial) <= len(flies):
+                return int(flies[int(vial) - 1])
+            return None
+        return int(flies)
+
+    def _ftc_window(self, df):
+        '''Assessment window for failure to climb, as crop-relative frames.
+        Starts at ftc_start_frame (absolute video frame, default crop_0) and
+        lasts ftc_window_sec seconds (default: to the end of the cropped video).
+        Returns (first_frame, last_frame), both inclusive.'''
+        crop_0 = int(getattr(self, 'crop_0', 0) or 0)
+        crop_n = getattr(self, 'crop_n', None)
+        last_available = (int(crop_n) - crop_0 - 1 if crop_n is not None
+                          else int(df.frame.max()))
+        start = getattr(self, 'ftc_start_frame', None)
+        f0 = 0 if start is None else max(0, int(start) - crop_0)
+        f0 = min(f0, last_available)
+        window_sec = getattr(self, 'ftc_window_sec', None)
+        if window_sec in (None, ''):
+            f1 = last_available
+        else:
+            f1 = min(last_available,
+                     f0 + int(round(float(window_sec) * float(self.frame_rate))) - 1)
+        return f0, max(f0, f1)
+
+    def compute_ftc(self):
+        """
+        Failure to climb (FTC): a fly that never reaches ftc_height_cm above the
+        vial floor within the assessment window. This is a separate outcome
+        from FNG: an FNG fly climbed and then fell, an FTC fly never ascended.
+
+        Writes <video>.ftc.csv, one row per vial (both analysis modes). Every
+        count is a median over runs of ftc_eval_frames frames:
+          n_detected_start / _end   flies detected over the first / last frames
+                                    of the window
+          n_detected_max            peak number of flies detected at once
+          n_reached_line            peak number of flies above the line at once
+                                    (a fly that reached the line and later fell,
+                                    or stopped and vanished, still counts)
+          n_above_line_end          flies above the line at the end of the
+                                    window (the classic climbing index)
+          ftc_count, ftc_fraction   flies that never reached the line. When the
+                                    number of flies loaded is known
+                                    (flies_per_vial, or 'n =' in vials.txt) this
+                                    is n_expected - n_reached_line (method
+                                    'expected'), which still counts motionless
+                                    flies the detector cannot see. Otherwise it
+                                    is n_detected_max - n_reached_line out of
+                                    n_detected_max (method 'detected').
+          count_warning             ';'-separated flags:
+                                    fewer_detected_than_expected,
+                                    more_above_than_expected, no_flies_detected,
+                                    detections_dropped (fewer than half the
+                                    flies still detected at the end -- usually
+                                    motionless flies lost to background
+                                    subtraction; see background_image)
+          n_tracks_*                individual mode only: per-fly outcomes from
+                                    <video>.ftc_particle.csv
+
+        In individual mode also writes <video>.ftc_particle.csv, one row per
+        linked fly, with its maximum height, whether and when (latency_sec) it
+        reached the line, how many falls it had, and an outcome:
+          fng       climbed and fell at least once, whether or not it
+                    reached the line first (a partial climb that ends in a
+                    fall is a fall, not a failure to ascend)
+          climber   reached the line, no fall
+          ftc       never reached the line and never fell, tracked for at
+                    least ftc_min_coverage of the window
+          unscored  never reached the line or fell, but tracked too briefly
+                    to judge
+
+        The line is ftc_height_cm above the floor when set; otherwise it is
+        the top of the drawn ROI box (see _ftc_line_px). The per-vial counts
+        above work without tracking, so in cohort mode a fly that climbed
+        partway and fell is still counted in ftc_count; use individual mode
+        (n_tracks_*) to separate those flies.
+        latency_sec is NaN when the line was not reached, or when the track
+        started too late to time the climb. For flies that never reach the
+        line it is censored at the window length (use survival analysis).
+
+        Heights are df_filtered 'y' (pixels above the floor, see invert_y)
+        divided by pixel_to_cm.
+        """
+        if self.debug: print('detector.compute_ftc')
+        path_ftc = self.name_nosuffix + '.ftc.csv'
+        path_particle = self.name_nosuffix + '.ftc_particle.csv'
+        self.df_ftc = pd.DataFrame(columns=FTC_COLUMNS)
+        self.df_ftc_particle = pd.DataFrame(columns=FTC_PARTICLE_COLUMNS)
+
+        if not getattr(self, 'ftc_enabled', True):
+            return
+
+        df = getattr(self, 'df_filtered', None)
+        n_vials = int(getattr(self, 'vials', 1))
+        pixel_to_cm = float(getattr(self, 'pixel_to_cm', 1.0) or 1.0)
+        frame_rate = float(getattr(self, 'frame_rate', 1.0) or 1.0)
+        line_px = self._ftc_line_px()
+        height_cm = round(line_px / pixel_to_cm, 4)
+        k = max(1, int(getattr(self, 'ftc_eval_frames', 5)))
+        min_coverage = float(getattr(self, 'ftc_min_coverage', 0.8))
+        individual = df is not None and 'particle' in df.columns
+
+        source = ('ftc_height_cm' if getattr(self, 'ftc_height_cm', None) not in (None, '')
+                  else 'top of ROI')
+        print('-- [ FTC ] Failure to climb: line at %.2f cm (%s)' % (height_cm, source))
+        if df is None or df.empty:
+            f0 = f1 = 0
+            df = pd.DataFrame(columns=['frame', 'vial', 'y'])
+        else:
+            f0, f1 = self._ftc_window(df)
+        window_sec = round((f1 - f0 + 1) / frame_rate, 4)
+        in_window = df[(df.frame >= f0) & (df.frame <= f1)]
+
+        ## ---- Per-fly outcomes (individual mode) ----
+        particle_rows = []
+        if individual:
+            start_tol = f0 + k  # a track must start this early for a latency
+            for (vial, particle), g in in_window.groupby(['vial', 'particle']):
+                g = g.sort_values('frame')
+                heights = g.y.to_numpy(dtype=float) / pixel_to_cm
+                frames = g.frame.to_numpy()
+                reached = g.y.to_numpy(dtype=float) >= line_px
+                coverage = len(frames) / float(f1 - f0 + 1)
+                series = pd.Series(g.y.to_numpy(dtype=float), index=frames)
+                falls = self._detect_fng_series(series) if len(series) > 2 else []
+                n_falls = len(falls)
+                latency = float('nan')
+                if reached.any():
+                    first = frames[int(np.argmax(reached))]
+                    if frames[0] <= start_tol:
+                        latency = round((first - f0) / frame_rate, 4)
+                ## Any fall makes the fly an FNG, whether or not it reached the
+                ## line first: a partial climb that ends in a fall is a fall,
+                ## not a failure to ascend.
+                if n_falls > 0:
+                    outcome = 'fng'
+                elif reached.any():
+                    outcome = 'climber'
+                else:
+                    outcome = 'ftc' if coverage >= min_coverage else 'unscored'
+                particle_rows.append({
+                    'vial': int(vial), 'particle': int(particle),
+                    'first_frame': int(frames[0]), 'last_frame': int(frames[-1]),
+                    'coverage': round(coverage, 4),
+                    'start_height_cm': round(heights[0], 4),
+                    'max_height_cm': round(heights.max(), 4),
+                    'reached_line': bool(reached.any()),
+                    'latency_sec': latency, 'n_falls': int(n_falls),
+                    'outcome': outcome,
+                })
+            self.df_ftc_particle = pd.DataFrame.from_records(
+                particle_rows, columns=FTC_PARTICLE_COLUMNS)
+
+        ## ---- Per-vial counts (both modes) ----
+        ## Counts are medians over k-frame runs so a single missed or spurious
+        ## detection does not change them. 'Reached the line' uses the PEAK
+        ## number of flies seen above the line at once during the window, not
+        ## the number above it at the end: a climber that stops moving at the
+        ## top can be subtracted into the background and vanish, and a fly
+        ## that reached the line and then fell is still not a failure.
+        all_frames = np.arange(f0, f1 + 1)
+        start_frames = all_frames[:k]
+        end_frames = all_frames[-k:]
+
+        def _counts(sub):
+            return sub.groupby('frame').size().reindex(all_frames, fill_value=0)
+
+        def _median(counts, frames):
+            c = counts.reindex(frames)
+            return int(round(float(np.median(c)))) if len(c) else 0
+
+        def _peak(counts):
+            smooth = counts.rolling(min(k, len(counts)), center=True, min_periods=1).median()
+            return int(round(float(smooth.max()))) if len(smooth) else 0
+
+        rows = []
+        for vial in range(1, n_vials + 1):
+            dv = in_window[in_window.vial == vial]
+            total = _counts(dv)
+            above = _counts(dv[dv.y >= line_px])
+            n_start, n_end = _median(total, start_frames), _median(total, end_frames)
+            n_max = _peak(total)
+            n_reached = _peak(above)
+            n_above_end = _median(above, end_frames)
+            n_expected = self._flies_expected(vial)
+            warnings = []
+            if n_expected is not None:
+                method = 'expected'
+                ftc_count = max(0, n_expected - n_reached)
+                ftc_fraction = ftc_count / float(n_expected) if n_expected else float('nan')
+                if n_max < n_expected:
+                    warnings.append('fewer_detected_than_expected')
+                if n_reached > n_expected:
+                    warnings.append('more_above_than_expected')
+            else:
+                method = 'detected'
+                ftc_count = max(0, n_max - n_reached)
+                ftc_fraction = ftc_count / float(n_max) if n_max else float('nan')
+                if n_max == 0:
+                    warnings.append('no_flies_detected')
+            ## Flies vanishing during the window usually means motionless
+            ## flies are being subtracted as background (see background_image)
+            if n_max > 0 and n_end < 0.5 * n_max:
+                warnings.append('detections_dropped')
+            warning = ';'.join(warnings)
+            row = {
+                'vial': vial, 'ftc_height_cm': height_cm,
+                'window_start_frame': f0, 'window_end_frame': f1,
+                'window_sec': window_sec,
+                'n_expected': n_expected if n_expected is not None else float('nan'),
+                'n_detected_start': n_start, 'n_detected_end': n_end,
+                'n_detected_max': n_max, 'n_reached_line': n_reached,
+                'n_above_line_end': n_above_end,
+                'ftc_count': ftc_count, 'ftc_fraction': round(ftc_fraction, 4),
+                'method': method, 'count_warning': warning,
+            }
+            for outcome in ('climber', 'fng', 'ftc', 'unscored'):
+                row['n_tracks_' + outcome] = (
+                    sum(1 for r in particle_rows
+                        if r['vial'] == vial and r['outcome'] == outcome)
+                    if individual else float('nan'))
+            rows.append(row)
+            if warning:
+                print('   !! vial %s: %s (expected %s; detected %s at start, %s at end, %s max)'
+                      % (self._vial_label(vial), warning, n_expected, n_start, n_end, n_max))
+        self.df_ftc = pd.DataFrame.from_records(rows, columns=FTC_COLUMNS)
+
+        ## Experimental details from the naming convention, like the slopes file
+        details = getattr(self, 'file_details', {}) or {}
+        ftc_out = self._relabel_vial_col(self.df_ftc).copy()
+        for i, (key, val) in enumerate(details.items()):
+            if key not in ftc_out.columns:
+                ftc_out.insert(i, key, val)
+        ftc_out.to_csv(path_ftc, index=False)
+        print('                --> Saved:', path_ftc.split('/')[-1])
+        if individual:
+            self._relabel_vial_col(self.df_ftc_particle).to_csv(path_particle, index=False)
+            print('                --> Saved:', path_particle.split('/')[-1])
+        return
 
     def compute_tortuosity(self):
         """
@@ -1683,6 +2082,9 @@ class detector(object):
         #----FNG detection (per vial) ----
         self.compute_fng()
 
+        #---- Failure to climb (per vial; per fly in individual mode) ----
+        self.compute_ftc()
+
         #---- Per-fly tortuosity metrics (individual mode + tortuosity_enabled) ----
         if (getattr(self, 'analysis_mode', 'cohort') == 'individual'
                 and getattr(self, 'tortuosity_enabled', True)):
@@ -1734,8 +2136,12 @@ class detector(object):
         ##    of the y vs. t curve for all points, not just by vials
         if self.debug: print('-- [ step 6b ] Plotting data: Re-running local linear regression on all')
         _result = self.local_linear_regression(self.df_filtered)
-        begin = _result.iloc[0].first_frame.astype(int)
-        end = _result.iloc[0].last_frame.astype(int)
+        if _result.empty or pd.isnull(_result.iloc[0].first_frame):
+            print('!! No window could be fitted for all vials; plotting first/last frames')
+            begin, end = 0, max(0, len(self.clean_stack) - 1)
+        else:
+            begin = int(_result.iloc[0].first_frame)
+            end = int(_result.iloc[0].last_frame)
         
         ## For future release
 #         min_R = _result.iloc[0].r_value ##
@@ -1749,7 +2155,7 @@ class detector(object):
         self.image_plot(df = spots,frame = begin, ax=ax1)
 
         if self.debug: print("-- [ step 6b1] Plotting data: Plot 2 - Frame %s" % end)
-        self.image_plot(df = spots, ax=ax2, frame = int(str(end)))
+        self.image_plot(df = spots, ax=ax2, frame = end)
 
         if self.debug: print("-- [ step 6b1] Plotting data: Plot 3 - Frame ALL")
         self.image_plot(df = spots,ax=ax4, frame = None)
@@ -1819,25 +2225,23 @@ class detector(object):
         try: frame = int(frame)
         except: frame = None
 
-        ## Assign plotting parameters depending on which frame(s)
-        if isinstance(frame, (int, np.integer)) and frame in df.frame.unique():
-            df = df[(df.frame == frame)]
-            alpha = .25
-            title  = "Frame: %s" % frame
-            ax.set_title(title)
-        elif frame == None:
+        ## Assign plotting parameters depending on which frame(s). A frame with
+        ## no detections is still drawn (just with no spots); previously this
+        ## case left 'alpha' undefined and crashed step 6 for the whole video.
+        if frame is None:
             frame = 0
             alpha = 0.01
             title = 'All x,y-points throughout video'
-            ax.set_title(title)
-        elif isinstance(frame, (int, np.integer)) and frame not in df.frame.unique():
-            print('Error: input frame is not accounted for in current DataFrame')
         else:
-            print("Chose a frame value in integer form, or 'None'")
+            df = df[(df.frame == frame)]
+            alpha = .25
+            title  = "Frame: %s" % frame
+            if df.empty: title += ' (no spots)'
+        ax.set_title(title)
 
-        ## Issue with plotting if last frame in stack
-        if frame == self.n_frames: image = self.clean_stack[frame-1]
-        else: image = self.clean_stack[frame]
+        ## Frames are relative to crop_0; keep the index inside the stack
+        frame = int(min(max(frame, 0), len(self.clean_stack) - 1))
+        image = self.clean_stack[frame]
 
         ## Plotting image
         ax.imshow(image,cmap=cm.Greys_r,origin='upper')
@@ -1907,10 +2311,11 @@ class detector(object):
         ## Plotting multiple vials' data
         if len(self.result) > 1:
             for V in range(1,self.vials+1):
-                l = 'Vial '+str(V)
-                c = self.color_list[V-1]
-                _details = self.result[V]
-                frames = _details[1],_details[2]
+                l = 'Vial '+str(self._vial_label(V))
+                _details = self.result.get(V)
+                ## Skip vials that could not be fitted (NaN row from get_slopes)
+                if _details is None or pd.isnull(_details[1]) or self.vial[V].empty:
+                    continue
                 two_plot(self.vial[V],
                          vial = V,
                          label = l,
@@ -1940,8 +2345,11 @@ class detector(object):
         ## Close any pyplot figures left open by a prior run before allocating new ones.
         plt.close('all')
 
-        ## Running through the first few steps
+        ## Running through the first few steps. Apply a vials.txt beside the
+        ## video too, so the GUI preview bins vials the same way the batch will.
         self.load_for_gui(variables)
+        self.vial_labels = None
+        self.apply_vials_sidecar(self.video_file)
 
         ## Load in video
         self.step_1(gui=True) # Crop and convert video
@@ -1987,18 +2395,30 @@ class detector(object):
 
         ## Setting plots for scatterplot overlay on a selected frame
         if self.debug: print('detector.parameter_testing: Subplot 1: Test frame')
+        ## check_frame is an absolute video frame; the stack and spot frames
+        ## start at crop_0.
+        check_idx = int(min(max(self.check_frame - self.crop_0, 0), len(self.clean_stack) - 1))
         axes[1].set_title('Frame: '+str(self.check_frame))
-        axes[1].imshow(self.clean_stack[self.check_frame], cmap = cm.Greys_r)
-        axes[1].scatter(spots_false[(spots_false.frame==self.check_frame)].x,
-                        spots_false[(spots_false.frame==self.check_frame)].y, 
+        axes[1].imshow(self.clean_stack[check_idx], cmap = cm.Greys_r)
+        axes[1].scatter(spots_false[(spots_false.frame==check_idx)].x,
+                        spots_false[(spots_false.frame==check_idx)].y,
                         color = 'b',marker ='+',alpha = .5)
-        a = axes[1].scatter(spots_true[spots_true.frame==self.check_frame].x,
-                            spots_true[spots_true.frame==self.check_frame].y, 
-                            c = spots_true[spots_true.frame==self.check_frame].vial,
+        a = axes[1].scatter(spots_true[spots_true.frame==check_idx].x,
+                            spots_true[spots_true.frame==check_idx].y,
+                            c = spots_true[spots_true.frame==check_idx].vial,
                             cmap = self.vial_color_map,
                             marker ='o',alpha = .8)
         a.set_facecolor('none')
         axes[1].vlines(self.bin_lines,0,self.df_big.y.max(),color='w')
+
+        ## Vial floor (heights are measured from it) and the failure-to-climb
+        ## line, in ROI pixel coordinates, so both can be checked by eye
+        floor = self._floor_px()
+        line_px = self._ftc_line_px()
+        axes[1].axhline(floor, color='c', linewidth=1, label='Floor')
+        axes[1].axhline(floor - line_px, color='m', linewidth=1, linestyle='--',
+                        label='FTC line (%.2f cm)' % (line_px / float(self.pixel_to_cm)))
+        axes[1].legend(loc='upper right', fontsize='xx-small', framealpha=.5)
         axes[1].set_xlim(0,self.w)
         axes[1].set_ylim(self.h,0)
         
@@ -2023,10 +2443,12 @@ class detector(object):
             color = self.color_list[V-1]
             _df = df[df.vial == V]
 
-            ## Local linear regression
-            begin = self.local_linear_regression(_df).iloc[0].first_frame.astype(int)
-            end = begin + self.window        
-                        
+            ## Most linear window from get_slopes (step 6); skip unfitted vials
+            _details = self.result.get(V)
+            if _df.empty or _details is None or pd.isnull(_details[1]):
+                continue
+            begin, end = int(_details[1]), int(_details[2])
+
             ## Plotting all points
             axes[5].plot(_df.groupby('frame').frame.unique(),
                 _df.groupby('frame').y.count(),alpha = .3, color = color,label='') 
@@ -2053,7 +2475,8 @@ class detector(object):
             label_x,label_y = 'Seconds','(cm)'
         labels = ['Flies detected per frame','Flies detected','Frame']
         axes[5].set(title = labels[0], ylabel=labels[1],xlabel=labels[2]) 
-        axes[5].set_ylim(ymin = 0,ymax = np.max(_df.groupby('frame').frame.count())*1.2)
+        per_frame = df.groupby(['vial','frame']).size()
+        axes[5].set_ylim(ymin = 0,ymax = (per_frame.max() if len(per_frame) else 1)*1.2)
 #         axes[5].legend(frameon=False, fontsize='x-small', ncol=ncol)
 
         custom_lines = [Line2D([0], [0], color='k', linestyle = '--', alpha = .9),
@@ -2090,14 +2513,16 @@ class detector(object):
 
         ## LocLin plot for each vial
         for V in range(1,self.vials + 1):
-            label = 'Vial '+str(V)
+            label = 'Vial '+str(self._vial_label(V))
             color = self.color_list[V-1]
             _df = df[df.vial == V]
 
-            ## Local linear regression
-            begin = self.local_linear_regression(_df).iloc[0].first_frame.astype(int)
-            end = begin + self.window        
-            
+            ## Most linear window from get_slopes (step 6); skip unfitted vials
+            _details = self.result.get(V)
+            if _df.empty or _details is None or pd.isnull(_details[1]):
+                continue
+            begin, end = int(_details[1]), int(_details[2])
+
             ## Plotting all points
             axes[2].plot(_df.groupby('frame').frame.mean() / convert_x,
                _df.groupby('frame').y.mean() / convert_y,alpha = .35, color = color,label='') 
