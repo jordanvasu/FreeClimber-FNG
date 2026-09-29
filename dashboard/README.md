@@ -6,12 +6,13 @@ matplotlib summaries.
 
 ## Scripts
 
-- `plot_tortuosity.py` — Histograms of the three per-bout tortuosity
-  metrics from one or more `*.tortuosity.csv` files. Headless (Agg backend);
-  safe to run in a non-interactive shell.
+- `plot_tortuosity.py` — Histograms of three per-bout tortuosity metrics
+  (tortuosity, straightness, mean turning angle) from one or more
+  `*.tortuosity_bouts.csv` files. Headless (Agg backend); safe to run in a
+  non-interactive shell.
 
   ```
-  python dashboard/plot_tortuosity.py path/to/<video>.tortuosity.csv
+  python dashboard/plot_tortuosity.py path/to/<video>.tortuosity_bouts.csv
   ```
 
   Writes `tortuosity_summary.png` next to the first input CSV (or to
