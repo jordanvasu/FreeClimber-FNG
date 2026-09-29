@@ -3,7 +3,7 @@
 FreeClimber-FNG is a Python tool for video analysis of *Drosophila melanogaster* negative geotaxis (climbing) assays. Beyond the climbing velocity of the original [FreeClimber](https://github.com/adamspierer/FreeClimber) platform (Spierer et al., 2020), it measures three separate climbing outcomes:
 
 - **Failed negative geotaxis (FNG)** — a fly climbs, then falls: fall events, fall distance, fall duration and recovery time
-- **Failure to climb (FTC)** — a fly never ascends past a line within a time limit
+- **Failure to climb (FTC)** — a fly never makes a climbing movement during the clip
 - **Climbing quality** — per-fly tracks and how directly each fly climbs (tortuosity, straightness, vertical efficiency)
 
 > **Note:** This repository is a fork of [adamspierer/FreeClimber](https://github.com/adamspierer/FreeClimber). The core particle detection and climbing velocity pipeline is the work of Adam N. Spierer and colleagues. FreeClimber-FNG adds the analyses above on top of that foundation. Development happens only here, at [jordanvasu/FreeClimber-FNG](https://github.com/jordanvasu/FreeClimber-FNG).
@@ -20,7 +20,7 @@ Added by Jordan Vasu (2025–2026):
 - **Fall measurements** — for each fall: the distance fallen (`drop_cm`, from the top of the climb to the bottom of the fall), the fall duration, and the recovery time until the fly starts climbing again (`recovery_duration_sec`)
 - **Individual-fly tracking mode** — an optional mode that links per-frame detections into per-fly trajectories using [TrackPy](http://soft-matter.github.io/trackpy/) (including predictive linking), in addition to the default cohort (mean-position) analysis
 - **Per-fly tortuosity / meandering metrics** — in individual mode, tortuosity, straightness, vertical efficiency and mean turning angle per fly per climbing bout, quantifying how directly (or erratically) each fly climbs
-- **Failure to climb (FTC)** *(new, September 2026)* — a separate outcome from FNG: a fly that never passes a line (by default the top of the drawn ROI box) within a time limit, and never falls. Reported per vial in both modes, and per fly in individual mode with its time to reach the line. See [Failure to climb](#failure-to-climb-ftc).
+- **Failure to climb (FTC)** *(new, September 2026)* — a separate outcome from FNG: a fly that makes no climbing movement and never falls during the clip, judged per fly from its own track (individual mode). Reported per fly with its time to first climb, and per vial as a count and fraction. See [Failure to climb](#failure-to-climb-ftc).
 - **Per-folder `vials.txt`** — override the vial count, name the physical vials, and give the number of flies loaded per vial
 - **Reliability fixes** *(September 2026)* — step 6 no longer skips videos that have an empty vial or frame; FNG no longer counts jitter in non-climbing vials as falls; heights are measured from the vial floor; `.mov`/`.mp4` names are no longer truncated; the GUI reads the frame rate from the video and reports errors instead of closing. Some outputs change: see [Upgrade notes](#upgrade-notes-september-2026).
 
@@ -71,8 +71,8 @@ FreeClimber-FNG is run in two stages: set up the analysis on one video in the GU
 pythonw ./scripts/FreeClimber_gui.py --video_file ./example/w1118_m_2_1.mov
 ```
 
-Draw the region of interest (ROI) over the vials with its bottom edge at the
-vial floor and its top edge at the finish line, set the detection parameters,
+Draw the region of interest (ROI) over the whole climbing area of the vials,
+with its bottom edge at the vial floor, set the detection parameters,
 press **Test parameters** to check them, and press **Save configuration**. The
 GUI steps are: 1 video and units (the frame rate is read from the video), 2 ROI,
 3 spot detection, 4 frames and vials, 5 naming, 6 individual tracking and
@@ -157,11 +157,11 @@ Each video's outputs are written next to it, named `<video>.<suffix>`:
 | `.raw.csv` | always | every detected spot, with filter results and vial |
 | `.filtered.csv` | always | kept spots; `y` = height above the vial floor, in pixels |
 | `.fng.csv` | `fng_enabled` (default) | one row per FNG event: frames, `drop_cm`, fall duration, `recovery_duration_sec` |
-| `.ftc.csv` | `ftc_enabled` (default) | failure to climb per vial |
+| `.ftc.csv` | individual mode + `ftc_enabled` (default) | failure to climb per vial |
 | `.slopes.csv` | always | climbing velocity per vial (local linear regression) |
 | `.diagnostic.png` | always | frames, spots and mean height over time |
 | `.tracks.csv` | individual mode | per-fly tracks (`particle` column) |
-| `.ftc_particle.csv` | individual mode | one row per fly: outcome, max height, time to the line, falls |
+| `.ftc_particle.csv` | individual mode + `ftc_enabled` (default) | one row per fly: outcome, climbing bouts, time to first climb, falls |
 | `.tortuosity_bouts.csv`, `.tortuosity_particle.csv` | individual mode + `tortuosity_enabled` | per-bout and per-fly path metrics |
 | `.ROI.png`, `.spot_check.png`, `.processed.png` | `--optimization_plots` or GUI | detection check plots |
 
@@ -258,91 +258,76 @@ unchanged. Set `fng_min_range_cm=0` to reproduce the old behavior.
 
 ## Failure to climb (FTC)
 
-A fly that **fails to climb** never ascends past a height line within a time
-limit. This is a different outcome from FNG: an FNG fly climbed and then fell,
-an FTC fly never ascended. The measure follows the classic "percentage of flies
-past the line" climbing index, and is written for every video in both modes.
+A fly that **fails to climb** makes no climbing movement at any point in the
+clip. This is a different outcome from FNG: an FNG fly climbed and then fell,
+an FTC fly never ascended. There is **no height line and no time limit**: each
+fly is judged on its own track, over the whole cropped clip. Because it is
+judged per fly, failure to climb needs individual mode
+(`analysis_mode='individual'`); in cohort mode no FTC files are written.
 
-Each fly is given exactly one outcome:
+A *climb* uses the same definition as the tortuosity metrics: after smoothing
+the track, a run of at least `tortuosity_bout_min_frames` frames (default 10)
+moving upward faster than `tortuosity_velocity_threshold` (default 1 mm/s) and
+rising at least `tortuosity_bout_min_displacement` (default 2 mm). How far the
+fly climbs does not matter. Each fly gets exactly one outcome:
 
 | Outcome | Rule |
 |---|---|
-| `fng` | climbed and fell at least once — **whether or not it reached the line first** (a partial climb that ends in a fall is a fall) |
-| `climber` | reached the line, no fall |
-| `ftc` | never reached the line and never fell |
-| `unscored` | never reached the line or fell, but tracked for less than `ftc_min_coverage` of the window |
+| `fng` | fell at least once, at any height (a short climb that ends in a fall is a fall) |
+| `climber` | at least one climbing bout, no fall |
+| `ftc` | no climbing bout and no fall, tracked for at least `ftc_min_coverage` of the clip |
+| `unscored` | no climbing bout and no fall, but tracked too briefly to judge |
 
-**The line** is `ftc_height_cm` above the vial floor when that key is set.
-Otherwise it defaults to **the top of the drawn ROI box**, less one spot
-`diameter`, because TrackPy cannot detect a fly centred right on the image
-edge. Draw the ROI so its top edge is where you want the finish line.
+**`<video>.ftc_particle.csv`** — one row per linked fly: `first_frame`,
+`last_frame`, `coverage` (fraction of the clip tracked), `start_height_cm`,
+`max_height_cm`, `max_rise_cm` (largest climb above an earlier low point),
+`n_climbing_bouts`, `latency_sec` (time from the start of the clip to the first
+climbing bout), `n_falls`, `outcome`. `latency_sec` is blank when the fly never
+climbed, or when its track began too late to time the climb. Flies that never
+climb are right-censored at the clip length, so latency also suits survival
+analysis (Kaplan–Meier / Cox).
 
 **`<video>.ftc.csv`** — one row per vial, with the naming-convention fields
-first. Counts are medians over runs of `ftc_eval_frames` frames:
+first:
 
 | Column | Meaning |
 |---|---|
-| `window_start_frame`, `window_end_frame`, `window_sec` | assessment window (frames relative to `crop_0`) |
+| `clip_sec` | length of the cropped clip |
 | `n_expected` | flies loaded (`flies_per_vial` or `vials.txt` `n =`), else blank |
-| `n_detected_start`, `n_detected_end`, `n_detected_max` | flies detected at the start, at the end, and at most at once |
-| `n_reached_line` | most flies seen above the line at once during the window |
-| `n_above_line_end` | flies above the line at the end of the window (classic index) |
-| `ftc_count`, `ftc_fraction` | flies that never reached the line |
-| `method` | `expected`: `n_expected − n_reached_line` over `n_expected`; `detected`: `n_detected_max − n_reached_line` over `n_detected_max` |
-| `count_warning` | `fewer_detected_than_expected`, `more_above_than_expected`, `no_flies_detected`, `detections_dropped` |
-| `n_tracks_climber/_fng/_ftc/_unscored` | per-fly outcome counts (individual mode only) |
-
-"Reached the line" uses the peak number of flies above the line, not the number
-above it at the end, so a fly that reached the line and later fell (FNG) or
-stopped and was lost from view is not counted as a failure. These per-vial
-counts do not use tracking, so in cohort mode a fly that climbed partway and
-then fell *is* included in `ftc_count`. Use individual mode, where
-`n_tracks_fng` / `n_tracks_ftc` separate those flies.
-
-**`<video>.ftc_particle.csv`** (individual mode) — one row per linked fly:
-`first_frame`, `last_frame`, `coverage` (fraction of the window tracked),
-`start_height_cm`, `max_height_cm`, `reached_line`, `latency_sec` (time from
-the window start to first crossing the line), `n_falls`, `outcome`.
-`latency_sec` is blank when the line was not reached, or when the track began
-too late to time the climb. Flies that never reach the line are
-right-censored at `window_sec`, so latency is suited to survival analysis
-(Kaplan–Meier / Cox) as well as to the yes/no FTC fraction.
+| `n_detected_start`, `n_detected_end`, `n_detected_max` | flies detected (median over `ftc_eval_frames` frames) at the start, at the end, and at most at once |
+| `n_tracks_climber/_fng/_ftc/_unscored` | per-fly outcome counts |
+| `ftc_count`, `ftc_fraction` | flies that failed to climb |
+| `method` | `expected`: `n_expected` minus the flies seen moving (climber + fng), over `n_expected`; `detected`: `n_tracks_ftc` over the scored tracks |
+| `count_warning` | `fewer_detected_than_expected`, `more_tracks_than_expected`, `no_flies_detected`, `detections_dropped` |
 
 | Key | Default | Description |
 |---|---|---|
-| `ftc_enabled` | `True` | Write the FTC files |
-| `ftc_height_cm` | `None` | Height of the line above the vial floor, cm; `None` = top of the ROI box (less one `diameter`) |
-| `ftc_window_sec` | `None` | Time limit in seconds; `None` = to the end of the cropped video |
-| `ftc_start_frame` | `crop_0` | Absolute video frame the time limit starts from (e.g. the tap) |
-| `ftc_eval_frames` | `5` | Frames each count is a median over |
-| `ftc_min_coverage` | `0.8` | Fraction of the window a non-climbing track must cover to be scored `ftc` |
+| `ftc_enabled` | `True` | Write the FTC files (individual mode only) |
+| `ftc_min_coverage` | `0.5` | Fraction of the clip a non-climbing track must cover to be scored `ftc` |
+| `ftc_eval_frames` | `5` | Frames each detection count is a median over |
 | `flies_per_vial` | `None` | Flies loaded: an int, or a left-to-right list such as `[10, 10, 9]` |
-| `floor_y` | `None` | Vial floor, in pixels from the top of the ROI; `None` = bottom edge of the ROI |
+| `floor_y` | `None` | Vial floor, in pixels from the top of the ROI; `None` = bottom edge of the ROI (used for the reported heights) |
 | `background_image` | `None` | Image (or video) of the empty vials to use as the background — see below |
 
-The GUI's *Step 7* row sets the line height (blank = top of the ROI box), time limit, flies per vial and
-the vial floor (entered as an image y-coordinate; it is converted to `floor_y`
-on save). *Test parameters* then draws the floor (cyan) and the line (magenta
-dashes) on the check-frame panel so both can be checked by eye.
+The GUI's *Step 7* row sets the flies per vial and the vial floor (entered as an
+image y-coordinate; it is converted to `floor_y` on save). *Test parameters*
+draws the floor as a cyan line on the check-frame panel.
 
 ### Getting a trustworthy FTC count
 
-1. **Set the floor.** Heights are measured from `floor_y`, or from the bottom
-   edge of the ROI. Flies resting on the floor should read about 0 cm. If they
-   sit well above 0 in `ftc_particle.csv`, the ROI extends below the floor, so
-   set `floor_y` (or the GUI's *Vial floor y*).
-2. **Give the fly count.** Flies that never move can be subtracted into the
+1. **Give the fly count.** A fly that never moves can be subtracted into the
    background, because the background is the median of the `blank_0`–`blank_n`
-   frames. Those are exactly the flies that fail to climb. With `flies_per_vial`
-   (or `n =` in `vials.txt`) they are still counted as failures, because the
-   count is `n_expected − n_reached_line`.
-3. **Use an empty-vial background if you can.** `background_image` takes a
-   picture of the same vials, in the same position, without flies. The image
-   must have the video's resolution. The background then contains no flies, so
-   motionless flies stay visible.
-4. **Read `count_warning`.** `detections_dropped` means fewer than half the
+   frames. Those are exactly the flies that fail to climb, and their tracks
+   end up short or missing (`unscored`). With `flies_per_vial` (or `n =` in
+   `vials.txt`) every fly not seen moving counts as a failure.
+2. **Use an empty-vial background if you can.** `background_image` takes a
+   picture of the same vials, in the same position, without flies, at the
+   video's resolution. Motionless flies then stay visible and get their own
+   `ftc` tracks.
+3. **Read `count_warning`.** `detections_dropped` means fewer than half the
    flies seen at the peak are still detected at the end, which usually means
-   flies are being lost to background subtraction.
+   flies are being lost to background subtraction. `more_tracks_than_expected`
+   means one fly was split into several tracks.
 
 ---
 

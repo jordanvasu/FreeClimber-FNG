@@ -2,17 +2,18 @@
 Tests for the failure-to-climb (FTC) measure (detector.compute_ftc) and the
 FNG noise floor that keeps non-climbing vials from being scored as falls.
 
+FTC is judged per fly over the whole clip: a fly with no climbing bout and no
+fall failed to climb. No height line or time limit is involved.
+
 Covers:
-  * test_ftc_cohort_detected_counts   -- cohort mode, no fly count configured:
-    FTC is the flies below the line out of those detected.
-  * test_ftc_expected_counts_and_warning -- with flies_per_vial, FTC counts
-    flies that never crossed the line even when they are not detected, and a
-    count_warning flags the shortfall.
-  * test_ftc_particle_outcomes        -- individual mode: climber / fng / ftc /
-    unscored outcomes and latency per fly.
-  * test_ftc_window                   -- ftc_start_frame / ftc_window_sec limit
-    the assessment window.
-  * test_ftc_disabled                 -- ftc_enabled=False writes nothing.
+  * test_ftc_needs_individual_mode   -- cohort mode writes nothing.
+  * test_ftc_particle_outcomes       -- climber / fng / ftc / unscored per fly,
+    including a partial climb (a climber) and a partial climb that falls (fng).
+  * test_ftc_detected_counts         -- per-vial counts from the tracks.
+  * test_ftc_expected_counts_and_warnings -- with flies_per_vial, flies never
+    seen moving count as failures; shortfalls and split tracks are flagged.
+  * test_ftc_detections_dropped      -- flies that vanish are flagged.
+  * test_ftc_disabled                -- ftc_enabled=False writes nothing.
   * test_fng_ignores_non_climbing_vial -- a vial of motionless, jittery flies
     produces no FNG events (it used to produce many).
 
@@ -37,9 +38,8 @@ N_FRAMES = 100
 
 
 def _bind(det):
-    for name in ("compute_ftc", "_ftc_window", "_flies_expected", "_floor_px",
-                 "_ftc_line_px", "_detect_fng_series", "_vial_label",
-                 "_relabel_vial_col"):
+    for name in ("compute_ftc", "_climbing_bouts", "_flies_expected",
+                 "_detect_fng_series", "_vial_label", "_relabel_vial_col"):
         setattr(det, name, types.MethodType(getattr(dfng.detector, name), det))
     return det
 
@@ -50,8 +50,7 @@ def _make_det(df, tmp_path, **cfg):
         pixel_to_cm=PX_PER_CM, frame_rate=FPS, n_frames=N_FRAMES,
         crop_0=0, crop_n=N_FRAMES,
         fng_smooth_window=5, fng_climb_thresh=0.10, fng_fall_thresh=0.10,
-        fng_min_gap=5,
-        ftc_height_cm=2.0, ftc_eval_frames=5, ftc_min_coverage=0.8,
+        fng_min_gap=5, ftc_eval_frames=5, ftc_min_coverage=0.8,
         df_filtered=df, file_details={"geno": "w1118"},
         name_nosuffix=str(tmp_path / "clip"),
     )
@@ -74,8 +73,9 @@ def _climb(to_cm, over=30, n=N_FRAMES):
 
 
 def _scenario():
-    """vial 1: 3 climbers; vial 2: 3 motionless flies; vial 3: one fly that
-    climbs above the line then falls, one partial climber (1 cm)."""
+    """vial 1: 3 climbers; vial 2: 3 motionless flies; vial 3: a fly that
+    climbs high then falls, a short climber (1 cm), a brief low fragment, and a
+    short climb that ends in a fall."""
     parts = []
     for p in range(3):
         parts.append(_track(1, 10 + p, _climb(5.0), jitter=0.3, seed=p))
@@ -83,116 +83,81 @@ def _scenario():
         parts.append(_track(2, 20 + p, np.full(N_FRAMES, 0.2), jitter=0.5, seed=10 + p))
     up_then_down = np.concatenate([np.linspace(0.1, 5.0, 30), np.full(20, 5.0),
                                    np.linspace(5.0, 0.3, 5), np.full(45, 0.3)])
+    partial_fall = np.concatenate([np.linspace(0.1, 1.2, 25), np.full(10, 1.2),
+                                   np.linspace(1.2, 0.2, 5), np.full(60, 0.2)])
     parts.append(_track(3, 30, up_then_down, jitter=0.2, seed=20))
     parts.append(_track(3, 31, _climb(1.0), jitter=0.2, seed=21))
+    parts.append(_track(3, 32, np.full(10, 0.2), frames=np.arange(10)))
+    parts.append(_track(3, 33, partial_fall, jitter=0.2, seed=22))
     return pd.concat(parts, ignore_index=True)
 
 
-def test_ftc_cohort_detected_counts(tmp_path):
-    df = _scenario().drop(columns="particle")
-    det = _make_det(df, tmp_path)
+def test_ftc_needs_individual_mode(tmp_path):
+    det = _make_det(_scenario().drop(columns="particle"), tmp_path)
     det.compute_ftc()
+    assert det.df_ftc.empty and det.df_ftc_particle.empty
+    assert not os.path.exists(str(tmp_path / "clip.ftc.csv"))
 
+
+def test_ftc_particle_outcomes(tmp_path):
+    det = _make_det(_scenario(), tmp_path)
+    det.compute_ftc()
+    parts = det.df_ftc_particle.set_index("particle")
+
+    assert (parts.loc[[10, 11, 12], "outcome"] == "climber").all()
+    assert (parts.loc[[20, 21, 22], "outcome"] == "ftc").all()
+    assert (parts.loc[[20, 21, 22], "n_climbing_bouts"] == 0).all()
+    assert parts.loc[30, "outcome"] == "fng"
+    # distance does not matter: a 1 cm climb is still a climb
+    assert parts.loc[31, "outcome"] == "climber"
+    assert parts.loc[32, "outcome"] == "unscored"
+    # a short climb that ends in a fall is a fall
+    assert parts.loc[33, "outcome"] == "fng" and parts.loc[33, "n_falls"] >= 1
+
+    assert parts.loc[10, "latency_sec"] == pytest.approx(0.0, abs=0.3)
+    assert parts.loc[[20, 32], "latency_sec"].isna().all()
+    assert parts.loc[10, "max_rise_cm"] == pytest.approx(4.9, abs=0.3)
+    assert parts.loc[20, "max_rise_cm"] < 0.2
+    assert os.path.exists(str(tmp_path / "clip.ftc_particle.csv"))
+
+
+def test_ftc_detected_counts(tmp_path):
+    det = _make_det(_scenario(), tmp_path)
+    det.compute_ftc()
     out = det.df_ftc.set_index("vial")
     assert list(out.method.unique()) == ["detected"]
-    assert out.loc[1, "ftc_count"] == 0 and out.loc[1, "n_reached_line"] == 3
-    assert out.loc[2, "ftc_count"] == 3 and out.loc[2, "ftc_fraction"] == 1.0
-    # the faller reached the line before falling: only the partial climber failed
-    assert out.loc[3, "ftc_count"] == 1 and out.loc[3, "n_above_line_end"] == 0
-    assert (out.count_warning == "").all()
-    assert out["n_tracks_ftc"].isna().all()  # no per-fly counts in cohort mode
+    assert out.loc[1, ["n_tracks_climber", "ftc_count", "ftc_fraction"]].tolist() == [3, 0, 0.0]
+    assert out.loc[2, ["n_tracks_ftc", "ftc_count", "ftc_fraction"]].tolist() == [3, 3, 1.0]
+    assert out.loc[3, ["n_tracks_fng", "n_tracks_climber", "n_tracks_unscored",
+                       "ftc_count"]].tolist() == [2, 1, 1, 0]
+    assert out.clip_sec.iloc[0] == 10.0
 
     written = pd.read_csv(str(tmp_path / "clip.ftc.csv"))
     assert written.columns[0] == "geno"  # naming-convention details prepended
-    assert not os.path.exists(str(tmp_path / "clip.ftc_particle.csv"))
 
 
-def test_ftc_expected_counts_and_warning(tmp_path):
-    df = _scenario().drop(columns="particle")
-    # 5 flies loaded per vial, but only 3 (or 2) are ever detected
-    det = _make_det(df, tmp_path, flies_per_vial=[3, 5, 2])
+def test_ftc_expected_counts_and_warnings(tmp_path):
+    det = _make_det(_scenario(), tmp_path, flies_per_vial=[3, 5, 2])
     det.compute_ftc()
-
     out = det.df_ftc.set_index("vial")
     assert list(out.method.unique()) == ["expected"]
     assert out.loc[1, "ftc_count"] == 0 and out.loc[1, "count_warning"] == ""
-    # the two undetected flies in vial 2 count as failures
-    assert out.loc[2, "ftc_count"] == 5 and out.loc[2, "ftc_fraction"] == 1.0
+    # 5 loaded, none ever seen moving: all 5 failed, and the shortfall is flagged
+    assert out.loc[2, ["ftc_count", "ftc_fraction"]].tolist() == [5, 1.0]
     assert out.loc[2, "count_warning"] == "fewer_detected_than_expected"
+    # 3 moving tracks for 2 flies: a fly was split into several tracks
+    assert "more_tracks_than_expected" in out.loc[3, "count_warning"]
+    assert out.loc[3, "ftc_count"] == 0
 
 
-def test_ftc_climbers_that_vanish_still_counted(tmp_path):
-    """Climbers that stop at the top and drop out of the detections (subtracted
-    into the background) still count as having reached the line, and the
-    vial is flagged."""
-    df = _scenario().drop(columns="particle")
+def test_ftc_detections_dropped(tmp_path):
+    df = _scenario()
     df = df[~((df.vial == 1) & (df.frame >= 50))]  # vial 1 flies vanish at frame 50
     det = _make_det(df, tmp_path)
     det.compute_ftc()
     row = det.df_ftc.set_index("vial").loc[1]
-    assert row.n_reached_line == 3 and row.ftc_count == 0
+    assert row.n_tracks_climber == 3  # they climbed before vanishing
     assert row.n_detected_end == 0 and row.count_warning == "detections_dropped"
-
-
-def test_ftc_particle_outcomes(tmp_path):
-    df = _scenario()
-    partial_fall = np.concatenate([np.linspace(0.1, 1.2, 25), np.full(10, 1.2),
-                                   np.linspace(1.2, 0.2, 5), np.full(60, 0.2)])
-    df = pd.concat([df,
-                    _track(3, 32, np.full(10, 0.2), frames=np.arange(10)),  # brief, low -> unscored
-                    _track(3, 33, partial_fall, jitter=0.2, seed=22)],     # partial climb, fell -> fng
-                   ignore_index=True)
-    det = _make_det(df, tmp_path)
-    det.compute_ftc()
-
-    parts = det.df_ftc_particle.set_index("particle")
-    assert (parts.loc[[10, 11, 12], "outcome"] == "climber").all()
-    assert (parts.loc[[20, 21, 22], "outcome"] == "ftc").all()
-    assert parts.loc[30, "outcome"] == "fng"
-    assert parts.loc[31, "outcome"] == "ftc"  # partial climb never reached 2 cm
-    assert parts.loc[32, "outcome"] == "unscored"
-    # a partial climb that ends in a fall is a fall, even below the line
-    assert parts.loc[33, "outcome"] == "fng"
-    assert not parts.loc[33, "reached_line"] and parts.loc[33, "n_falls"] >= 1
-
-    # climbers reach 2 cm about 11-12 frames into a 30-frame climb to 5 cm
-    assert parts.loc[10, "latency_sec"] == pytest.approx(1.15, abs=0.2)
-    assert parts.loc[[20, 31], "latency_sec"].isna().all()
-
-    counts = det.df_ftc.set_index("vial")
-    assert counts.loc[1, "n_tracks_climber"] == 3
-    assert counts.loc[2, "n_tracks_ftc"] == 3
-    assert counts.loc[3, ["n_tracks_fng", "n_tracks_ftc", "n_tracks_unscored"]].tolist() == [2, 1, 1]
-    assert os.path.exists(str(tmp_path / "clip.ftc_particle.csv"))
-
-
-def test_ftc_window(tmp_path):
-    df = _scenario()
-    # 1 s window starting at frame 0: nobody has reached 2 cm yet
-    det = _make_det(df, tmp_path, ftc_window_sec=1.0)
-    det.compute_ftc()
-    row = det.df_ftc.iloc[0]
-    assert (row.window_start_frame, row.window_end_frame, row.window_sec) == (0, 9, 1.0)
-    assert (det.df_ftc_particle.reached_line == False).all()  # noqa: E712
-
-    # ftc_start_frame is an absolute video frame; frames are crop-relative
-    det = _make_det(df, tmp_path, crop_0=20, crop_n=120, ftc_start_frame=50)
-    assert det._ftc_window(df) == (30, 99)
-
-
-def test_ftc_line_defaults_to_roi_top(tmp_path):
-    """With no ftc_height_cm the line is the top of the ROI box, one spot
-    diameter down (TrackPy cannot detect spots centred on the edge)."""
-    df = _scenario()
-    det = _make_det(df, tmp_path, ftc_height_cm=None, h=110, diameter=7)
-    assert det._ftc_line_px() == 103.0
-    det.compute_ftc()
-    assert det.df_ftc.ftc_height_cm.iloc[0] == pytest.approx(103.0 / PX_PER_CM)
-    # climbers top out at 5 cm (100 px): below a 5.15 cm line, so none reach it
-    assert not det.df_ftc_particle.reached_line.any()
-
-    det = _make_det(df, tmp_path, ftc_height_cm=None, h=110, floor_y=100, diameter=7)
-    assert det._ftc_line_px() == 93.0  # measured from the configured floor
 
 
 def test_ftc_disabled(tmp_path):

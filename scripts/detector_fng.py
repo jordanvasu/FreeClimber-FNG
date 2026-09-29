@@ -46,8 +46,7 @@ CONFIG_KEYS = frozenset({
     'fng_enabled', 'fng_smooth_window', 'fng_climb_thresh',
     'fng_fall_thresh', 'fng_min_gap', 'fng_recovery_thresh',
     'fng_min_range_cm',
-    'ftc_enabled', 'ftc_height_cm', 'ftc_window_sec', 'ftc_start_frame',
-    'ftc_eval_frames', 'ftc_min_coverage',
+    'ftc_enabled', 'ftc_eval_frames', 'ftc_min_coverage',
     'analysis_mode', 'link_search_range', 'link_memory',
     'link_predictor', 'link_min_track_length',
     'tortuosity_enabled', 'tortuosity_smoothing_window',
@@ -61,14 +60,13 @@ CONFIG_KEYS = frozenset({
 PATH_KEYS = frozenset({'path_project', 'background_image'})
 
 ## Column layout of <video>.ftc.csv (per vial) and <video>.ftc_particle.csv
-FTC_COLUMNS = ['vial', 'ftc_height_cm', 'window_start_frame', 'window_end_frame',
-               'window_sec', 'n_expected', 'n_detected_start', 'n_detected_end',
-               'n_detected_max', 'n_reached_line', 'n_above_line_end',
-               'ftc_count', 'ftc_fraction', 'method', 'count_warning',
-               'n_tracks_climber', 'n_tracks_fng', 'n_tracks_ftc', 'n_tracks_unscored']
+FTC_COLUMNS = ['vial', 'clip_sec', 'n_expected',
+               'n_detected_start', 'n_detected_end', 'n_detected_max',
+               'n_tracks_climber', 'n_tracks_fng', 'n_tracks_ftc', 'n_tracks_unscored',
+               'ftc_count', 'ftc_fraction', 'method', 'count_warning']
 FTC_PARTICLE_COLUMNS = ['vial', 'particle', 'first_frame', 'last_frame', 'coverage',
-                        'start_height_cm', 'max_height_cm', 'reached_line',
-                        'latency_sec', 'n_falls', 'outcome']
+                        'start_height_cm', 'max_height_cm', 'max_rise_cm',
+                        'n_climbing_bouts', 'latency_sec', 'n_falls', 'outcome']
 
 
 def parse_config_line(item):
@@ -1016,23 +1014,6 @@ class detector(object):
                 floor = min(floor, height - getattr(self, 'y', 0))
         return floor
 
-    def _ftc_line_px(self):
-        '''Failure-to-climb line as a height above the floor, in pixels.
-
-        'ftc_height_cm' when set. Otherwise the line is the top of the drawn
-        ROI box, less one spot 'diameter': TrackPy drops spots centred closer
-        than that to the image edge, so a fly exactly at the top edge could
-        never be detected crossing it. Falls back to 2 cm when the ROI is
-        unknown.'''
-        height_cm = getattr(self, 'ftc_height_cm', None)
-        pixel_to_cm = float(getattr(self, 'pixel_to_cm', 1.0) or 1.0)
-        if height_cm not in (None, ''):
-            return float(height_cm) * pixel_to_cm
-        floor = self._floor_px()
-        if floor is None:
-            return 2.0 * pixel_to_cm
-        return max(0.0, float(floor) - float(getattr(self, 'diameter', 0) or 0))
-
     def get_slopes(self):
         '''Creates a dictionary with keys for vials and values for the DataFrame sliced by
         vial. It will also calculate the local linear regression for each vial and
@@ -1469,83 +1450,87 @@ class detector(object):
             return None
         return int(flies)
 
-    def _ftc_window(self, df):
-        '''Assessment window for failure to climb, as crop-relative frames.
-        Starts at ftc_start_frame (absolute video frame, default crop_0) and
-        lasts ftc_window_sec seconds (default: to the end of the cropped video).
-        Returns (first_frame, last_frame), both inclusive.'''
-        crop_0 = int(getattr(self, 'crop_0', 0) or 0)
-        crop_n = getattr(self, 'crop_n', None)
-        last_available = (int(crop_n) - crop_0 - 1 if crop_n is not None
-                          else int(df.frame.max()))
-        start = getattr(self, 'ftc_start_frame', None)
-        f0 = 0 if start is None else max(0, int(start) - crop_0)
-        f0 = min(f0, last_available)
-        window_sec = getattr(self, 'ftc_window_sec', None)
-        if window_sec in (None, ''):
-            f1 = last_available
-        else:
-            f1 = min(last_available,
-                     f0 + int(round(float(window_sec) * float(self.frame_rate))) - 1)
-        return f0, max(f0, f1)
+    def _climbing_bouts(self, frames, xs_px, ys_px):
+        '''Climbing bouts in one fly's track, with the same definition the
+        tortuosity step uses: after Savitzky-Golay smoothing, a run of frames
+        whose upward speed exceeds tortuosity_velocity_threshold (mm/s), lasting
+        at least tortuosity_bout_min_frames frames and rising at least
+        tortuosity_bout_min_displacement mm.
+        ----
+        Returns:
+          (bouts, ys_mm): list of (first_frame, last_frame) per bout, and the
+          smoothed heights in mm used to find them'''
+        frame_rate = float(getattr(self, 'frame_rate', 1.0) or 1.0)
+        px_to_mm = 10.0 / float(getattr(self, 'pixel_to_cm', 1.0) or 1.0)
+        velocity = float(getattr(self, 'tortuosity_velocity_threshold', 1.0))
+        min_frames = int(getattr(self, 'tortuosity_bout_min_frames', 10))
+        min_rise = float(getattr(self, 'tortuosity_bout_min_displacement', 2.0))
+        window = _tortuosity._normalize_savgol_window(
+            getattr(self, 'tortuosity_smoothing_window', 5))
+
+        xs_mm = np.asarray(xs_px, dtype=float) * px_to_mm
+        ys_mm = np.asarray(ys_px, dtype=float) * px_to_mm
+        ## Tracks shorter than the window are used unsmoothed (the tortuosity
+        ## step already reports those, so no second warning here)
+        if window and len(frames) >= window:
+            xs_mm, ys_mm, _ = _tortuosity.smooth_xy(xs_mm, ys_mm, window)
+
+        bouts = []
+        for start, stop in _tortuosity._segment_climbing_bouts(
+                frames, ys_mm, frame_rate=frame_rate, velocity_threshold=velocity):
+            if int(frames[stop] - frames[start] + 1) < min_frames:
+                continue
+            if ys_mm[stop] - ys_mm[start] < min_rise:
+                continue
+            bouts.append((int(frames[start]), int(frames[stop])))
+        return bouts, ys_mm
 
     def compute_ftc(self):
         """
-        Failure to climb (FTC): a fly that never reaches ftc_height_cm above the
-        vial floor within the assessment window. This is a separate outcome
-        from FNG: an FNG fly climbed and then fell, an FTC fly never ascended.
+        Failure to climb (FTC): a fly that makes no climbing movement at any
+        point in the clip. This is a separate outcome from FNG: an FNG fly
+        climbed and fell, an FTC fly never ascended. No height line is used --
+        each fly is judged on its own track, over the whole cropped clip -- so
+        failure to climb needs analysis_mode='individual'. In cohort mode
+        nothing is written.
 
-        Writes <video>.ftc.csv, one row per vial (both analysis modes). Every
-        count is a median over runs of ftc_eval_frames frames:
-          n_detected_start / _end   flies detected over the first / last frames
-                                    of the window
-          n_detected_max            peak number of flies detected at once
-          n_reached_line            peak number of flies above the line at once
-                                    (a fly that reached the line and later fell,
-                                    or stopped and vanished, still counts)
-          n_above_line_end          flies above the line at the end of the
-                                    window (the classic climbing index)
-          ftc_count, ftc_fraction   flies that never reached the line. When the
-                                    number of flies loaded is known
-                                    (flies_per_vial, or 'n =' in vials.txt) this
-                                    is n_expected - n_reached_line (method
-                                    'expected'), which still counts motionless
-                                    flies the detector cannot see. Otherwise it
-                                    is n_detected_max - n_reached_line out of
-                                    n_detected_max (method 'detected').
+        A 'climb' is a climbing bout as defined for tortuosity (see
+        _climbing_bouts). Each linked fly gets one outcome:
+          fng       fell at least once (at any height, even after a short climb)
+          climber   at least one climbing bout, no fall
+          ftc       no climbing bout and no fall, tracked for at least
+                    ftc_min_coverage of the clip
+          unscored  no climbing bout and no fall, but tracked too briefly to
+                    judge (e.g. a fly lost to background subtraction)
+
+        Writes <video>.ftc_particle.csv, one row per fly: coverage (fraction of
+        the clip tracked), start and maximum height, max_rise_cm (largest
+        climb above an earlier low point), n_climbing_bouts, latency_sec (time
+        from the start of the clip to the first climbing bout; blank when the
+        fly never climbed or its track started late), n_falls, outcome.
+
+        Writes <video>.ftc.csv, one row per vial, with the naming-convention
+        fields first:
+          clip_sec                  length of the cropped clip
+          n_detected_start/_end/_max  flies detected (median over
+                                    ftc_eval_frames frames) at the start, the
+                                    end, and at most at once
+          n_tracks_*                per-fly outcome counts
+          ftc_count, ftc_fraction   flies that failed to climb. With the number
+                                    of flies loaded (flies_per_vial, or 'n =' in
+                                    vials.txt), this is n_expected minus the
+                                    flies seen moving (climber + fng), so flies
+                                    the detector never sees still count (method
+                                    'expected'). Otherwise it is n_tracks_ftc
+                                    out of the scored tracks (method 'detected').
           count_warning             ';'-separated flags:
                                     fewer_detected_than_expected,
-                                    more_above_than_expected, no_flies_detected,
+                                    more_tracks_than_expected (one fly split
+                                    into several tracks), no_flies_detected,
                                     detections_dropped (fewer than half the
                                     flies still detected at the end -- usually
                                     motionless flies lost to background
                                     subtraction; see background_image)
-          n_tracks_*                individual mode only: per-fly outcomes from
-                                    <video>.ftc_particle.csv
-
-        In individual mode also writes <video>.ftc_particle.csv, one row per
-        linked fly, with its maximum height, whether and when (latency_sec) it
-        reached the line, how many falls it had, and an outcome:
-          fng       climbed and fell at least once, whether or not it
-                    reached the line first (a partial climb that ends in a
-                    fall is a fall, not a failure to ascend)
-          climber   reached the line, no fall
-          ftc       never reached the line and never fell, tracked for at
-                    least ftc_min_coverage of the window
-          unscored  never reached the line or fell, but tracked too briefly
-                    to judge
-
-        The line is ftc_height_cm above the floor when set; otherwise it is
-        the top of the drawn ROI box (see _ftc_line_px). The per-vial counts
-        above work without tracking, so in cohort mode a fly that climbed
-        partway and fell is still counted in ftc_count; use individual mode
-        (n_tracks_*) to separate those flies.
-        latency_sec is NaN when the line was not reached, or when the track
-        started too late to time the climb. For flies that never reach the
-        line it is censored at the window length (use survival analysis).
-
-        Heights are df_filtered 'y' (pixels above the floor, see invert_y)
-        divided by pixel_to_cm.
         """
         if self.debug: print('detector.compute_ftc')
         path_ftc = self.name_nosuffix + '.ftc.csv'
@@ -1555,78 +1540,58 @@ class detector(object):
 
         if not getattr(self, 'ftc_enabled', True):
             return
-
         df = getattr(self, 'df_filtered', None)
-        n_vials = int(getattr(self, 'vials', 1))
+        if df is None or 'particle' not in df.columns:
+            print("-- [ FTC ] Skipped: failure to climb is judged per fly and "
+                  "needs analysis_mode='individual'")
+            return
+
         pixel_to_cm = float(getattr(self, 'pixel_to_cm', 1.0) or 1.0)
         frame_rate = float(getattr(self, 'frame_rate', 1.0) or 1.0)
-        line_px = self._ftc_line_px()
-        height_cm = round(line_px / pixel_to_cm, 4)
         k = max(1, int(getattr(self, 'ftc_eval_frames', 5)))
-        min_coverage = float(getattr(self, 'ftc_min_coverage', 0.8))
-        individual = df is not None and 'particle' in df.columns
+        min_coverage = float(getattr(self, 'ftc_min_coverage', 0.5))
+        crop_n = getattr(self, 'crop_n', None)
+        n_clip = (int(crop_n) - int(getattr(self, 'crop_0', 0) or 0) if crop_n is not None
+                  else (int(df.frame.max()) + 1 if not df.empty else 0))
+        n_clip = max(n_clip, 1)
+        clip_sec = round(n_clip / frame_rate, 4)
+        print('-- [ FTC ] Failure to climb over the whole clip (%.2f s)' % clip_sec)
 
-        source = ('ftc_height_cm' if getattr(self, 'ftc_height_cm', None) not in (None, '')
-                  else 'top of ROI')
-        print('-- [ FTC ] Failure to climb: line at %.2f cm (%s)' % (height_cm, source))
-        if df is None or df.empty:
-            f0 = f1 = 0
-            df = pd.DataFrame(columns=['frame', 'vial', 'y'])
-        else:
-            f0, f1 = self._ftc_window(df)
-        window_sec = round((f1 - f0 + 1) / frame_rate, 4)
-        in_window = df[(df.frame >= f0) & (df.frame <= f1)]
-
-        ## ---- Per-fly outcomes (individual mode) ----
+        ## ---- Per-fly outcomes ----
         particle_rows = []
-        if individual:
-            start_tol = f0 + k  # a track must start this early for a latency
-            for (vial, particle), g in in_window.groupby(['vial', 'particle']):
-                g = g.sort_values('frame')
-                heights = g.y.to_numpy(dtype=float) / pixel_to_cm
-                frames = g.frame.to_numpy()
-                reached = g.y.to_numpy(dtype=float) >= line_px
-                coverage = len(frames) / float(f1 - f0 + 1)
-                series = pd.Series(g.y.to_numpy(dtype=float), index=frames)
-                falls = self._detect_fng_series(series) if len(series) > 2 else []
-                n_falls = len(falls)
-                latency = float('nan')
-                if reached.any():
-                    first = frames[int(np.argmax(reached))]
-                    if frames[0] <= start_tol:
-                        latency = round((first - f0) / frame_rate, 4)
-                ## Any fall makes the fly an FNG, whether or not it reached the
-                ## line first: a partial climb that ends in a fall is a fall,
-                ## not a failure to ascend.
-                if n_falls > 0:
-                    outcome = 'fng'
-                elif reached.any():
-                    outcome = 'climber'
-                else:
-                    outcome = 'ftc' if coverage >= min_coverage else 'unscored'
-                particle_rows.append({
-                    'vial': int(vial), 'particle': int(particle),
-                    'first_frame': int(frames[0]), 'last_frame': int(frames[-1]),
-                    'coverage': round(coverage, 4),
-                    'start_height_cm': round(heights[0], 4),
-                    'max_height_cm': round(heights.max(), 4),
-                    'reached_line': bool(reached.any()),
-                    'latency_sec': latency, 'n_falls': int(n_falls),
-                    'outcome': outcome,
-                })
-            self.df_ftc_particle = pd.DataFrame.from_records(
-                particle_rows, columns=FTC_PARTICLE_COLUMNS)
+        for (vial, particle), g in df.groupby(['vial', 'particle']):
+            g = g.sort_values('frame')
+            frames = g.frame.to_numpy()
+            ys_px = g.y.to_numpy(dtype=float)
+            coverage = len(frames) / float(n_clip)
+            bouts, ys_mm = self._climbing_bouts(frames, g.x.to_numpy(dtype=float), ys_px)
+            falls = (self._detect_fng_series(pd.Series(ys_px, index=frames))
+                     if len(frames) > 2 else [])
+            max_rise_cm = float(np.max(ys_mm - np.minimum.accumulate(ys_mm))) / 10.0
+            latency = float('nan')
+            if bouts and frames[0] < k:
+                latency = round(bouts[0][0] / frame_rate, 4)
+            if falls:
+                outcome = 'fng'
+            elif bouts:
+                outcome = 'climber'
+            else:
+                outcome = 'ftc' if coverage >= min_coverage else 'unscored'
+            particle_rows.append({
+                'vial': int(vial), 'particle': int(particle),
+                'first_frame': int(frames[0]), 'last_frame': int(frames[-1]),
+                'coverage': round(coverage, 4),
+                'start_height_cm': round(ys_px[0] / pixel_to_cm, 4),
+                'max_height_cm': round(ys_px.max() / pixel_to_cm, 4),
+                'max_rise_cm': round(max_rise_cm, 4),
+                'n_climbing_bouts': len(bouts), 'latency_sec': latency,
+                'n_falls': len(falls), 'outcome': outcome,
+            })
+        self.df_ftc_particle = pd.DataFrame.from_records(
+            particle_rows, columns=FTC_PARTICLE_COLUMNS)
 
-        ## ---- Per-vial counts (both modes) ----
-        ## Counts are medians over k-frame runs so a single missed or spurious
-        ## detection does not change them. 'Reached the line' uses the PEAK
-        ## number of flies seen above the line at once during the window, not
-        ## the number above it at the end: a climber that stops moving at the
-        ## top can be subtracted into the background and vanish, and a fly
-        ## that reached the line and then fell is still not a failure.
-        all_frames = np.arange(f0, f1 + 1)
-        start_frames = all_frames[:k]
-        end_frames = all_frames[-k:]
+        ## ---- Per-vial counts ----
+        all_frames = np.arange(n_clip)
 
         def _counts(sub):
             return sub.groupby('frame').size().reindex(all_frames, fill_value=0)
@@ -1640,52 +1605,46 @@ class detector(object):
             return int(round(float(smooth.max()))) if len(smooth) else 0
 
         rows = []
-        for vial in range(1, n_vials + 1):
-            dv = in_window[in_window.vial == vial]
-            total = _counts(dv)
-            above = _counts(dv[dv.y >= line_px])
-            n_start, n_end = _median(total, start_frames), _median(total, end_frames)
+        for vial in range(1, int(getattr(self, 'vials', 1)) + 1):
+            total = _counts(df[df.vial == vial])
+            n_start = _median(total, all_frames[:k])
+            n_end = _median(total, all_frames[-k:])
             n_max = _peak(total)
-            n_reached = _peak(above)
-            n_above_end = _median(above, end_frames)
+            outcomes = [r['outcome'] for r in particle_rows if r['vial'] == vial]
+            n = {o: outcomes.count(o) for o in ('climber', 'fng', 'ftc', 'unscored')}
+            n_moved = n['climber'] + n['fng']
             n_expected = self._flies_expected(vial)
             warnings = []
             if n_expected is not None:
                 method = 'expected'
-                ftc_count = max(0, n_expected - n_reached)
+                ftc_count = max(0, n_expected - n_moved)
                 ftc_fraction = ftc_count / float(n_expected) if n_expected else float('nan')
                 if n_max < n_expected:
                     warnings.append('fewer_detected_than_expected')
-                if n_reached > n_expected:
-                    warnings.append('more_above_than_expected')
+                if n_moved > n_expected:
+                    warnings.append('more_tracks_than_expected')
             else:
                 method = 'detected'
-                ftc_count = max(0, n_max - n_reached)
-                ftc_fraction = ftc_count / float(n_max) if n_max else float('nan')
+                ftc_count = n['ftc']
+                scored = n_moved + n['ftc']
+                ftc_fraction = ftc_count / float(scored) if scored else float('nan')
                 if n_max == 0:
                     warnings.append('no_flies_detected')
-            ## Flies vanishing during the window usually means motionless
-            ## flies are being subtracted as background (see background_image)
+            ## Flies vanishing during the clip usually means motionless flies
+            ## are being subtracted as background (see background_image)
             if n_max > 0 and n_end < 0.5 * n_max:
                 warnings.append('detections_dropped')
             warning = ';'.join(warnings)
-            row = {
-                'vial': vial, 'ftc_height_cm': height_cm,
-                'window_start_frame': f0, 'window_end_frame': f1,
-                'window_sec': window_sec,
+            rows.append({
+                'vial': vial, 'clip_sec': clip_sec,
                 'n_expected': n_expected if n_expected is not None else float('nan'),
                 'n_detected_start': n_start, 'n_detected_end': n_end,
-                'n_detected_max': n_max, 'n_reached_line': n_reached,
-                'n_above_line_end': n_above_end,
+                'n_detected_max': n_max,
+                'n_tracks_climber': n['climber'], 'n_tracks_fng': n['fng'],
+                'n_tracks_ftc': n['ftc'], 'n_tracks_unscored': n['unscored'],
                 'ftc_count': ftc_count, 'ftc_fraction': round(ftc_fraction, 4),
                 'method': method, 'count_warning': warning,
-            }
-            for outcome in ('climber', 'fng', 'ftc', 'unscored'):
-                row['n_tracks_' + outcome] = (
-                    sum(1 for r in particle_rows
-                        if r['vial'] == vial and r['outcome'] == outcome)
-                    if individual else float('nan'))
-            rows.append(row)
+            })
             if warning:
                 print('   !! vial %s: %s (expected %s; detected %s at start, %s at end, %s max)'
                       % (self._vial_label(vial), warning, n_expected, n_start, n_end, n_max))
@@ -1698,10 +1657,9 @@ class detector(object):
             if key not in ftc_out.columns:
                 ftc_out.insert(i, key, val)
         ftc_out.to_csv(path_ftc, index=False)
+        self._relabel_vial_col(self.df_ftc_particle).to_csv(path_particle, index=False)
         print('                --> Saved:', path_ftc.split('/')[-1])
-        if individual:
-            self._relabel_vial_col(self.df_ftc_particle).to_csv(path_particle, index=False)
-            print('                --> Saved:', path_particle.split('/')[-1])
+        print('                --> Saved:', path_particle.split('/')[-1])
         return
 
     def compute_tortuosity(self):
@@ -2411,13 +2369,8 @@ class detector(object):
         a.set_facecolor('none')
         axes[1].vlines(self.bin_lines,0,self.df_big.y.max(),color='w')
 
-        ## Vial floor (heights are measured from it) and the failure-to-climb
-        ## line, in ROI pixel coordinates, so both can be checked by eye
-        floor = self._floor_px()
-        line_px = self._ftc_line_px()
-        axes[1].axhline(floor, color='c', linewidth=1, label='Floor')
-        axes[1].axhline(floor - line_px, color='m', linewidth=1, linestyle='--',
-                        label='FTC line (%.2f cm)' % (line_px / float(self.pixel_to_cm)))
+        ## Vial floor (heights are measured from it), to check by eye
+        axes[1].axhline(self._floor_px(), color='c', linewidth=1, label='Floor')
         axes[1].legend(loc='upper right', fontsize='xx-small', framealpha=.5)
         axes[1].set_xlim(0,self.w)
         axes[1].set_ylim(self.h,0)

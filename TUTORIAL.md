@@ -204,23 +204,19 @@ Experimental details that do not change over the course of the experiment (e.g. 
 
 <h3>Step 7 - Failure to climb</h3>
 
-A fly that never gets higher than a line above the vial floor within a time limit *failed to climb*, a separate outcome from a failed negative geotaxis (FNG) fall. See the README section "Failure to climb (FTC)".
-
-**Line (cm)** - Height of the line above the vial floor. Leave blank to use the top of the drawn ROI box (one spot diameter below the top edge, since flies centred on the edge cannot be detected), so draw the ROI with its top edge at your finish line. A fly that climbs partway and then falls is counted as a fall (FNG), not a failure to climb.
-
-**Within (s)** - Time limit in seconds from the start of the cropped video. Leave blank to use the whole cropped video.
+A fly that makes no climbing movement at any point in the clip, and never falls, *failed to climb*, a separate outcome from a failed negative geotaxis (FNG) fall. Each fly is judged on its own track over the whole cropped clip, so there is no height line or time limit to set, but **Individual mode** (Step 6) must be on. A fly that climbs any distance and then falls is counted as a fall (FNG). See the README section "Failure to climb (FTC)".
 
 **Flies / vial** - How many flies were loaded into each vial: one number, or a comma-separated list left to right (e.g. `10,10,9`). With this, flies the detector cannot see (for example motionless flies lost to background subtraction) still count as failures. A `vials.txt` `n =` line overrides it per folder.
 
-**Vial floor y (px)** - The image y-coordinate of the vial floor, read off the axes of the video frame. Heights are measured from here. Leave blank to use the bottom edge of the ROI. The ROI bottom edge should sit at or just below the floor.
+**Vial floor y (px)** - The image y-coordinate of the vial floor, read off the axes of the video frame. Reported heights are measured from here. Leave blank to use the bottom edge of the ROI. The ROI bottom edge should sit at or just below the floor.
 
-After *Test parameters*, the check-frame panel shows the floor as a cyan line and the failure-to-climb line as a magenta dashed line.
+After *Test parameters*, the check-frame panel shows the floor as a cyan line.
 
 <h3>Buttons</h3>
 
 When all the appropriate fields are set, we can process the video.
 
-**Test parameters** - This button begins a full analysis of the loaded video and plots out several diagnostic plots. On the top row (top row, left to right) the median background image, `Check frame` frame number with candidate (blue +; none here) and true (colored circles) spots plus the vial floor and failure-to-climb line, and the mean vertical-position vs. time plots (darker segments indicate most linear section). If the test fails (for example no spots survive filtering), the reason is shown in a message box and the status bar. On the bottom row (left to right), there are plots for the distribution of spots' mass (line =  `minmass` value), distribution of spot signals (line = signal `threshold` value), and number of spots counted per frame (for entire video). 
+**Test parameters** - This button begins a full analysis of the loaded video and plots out several diagnostic plots. On the top row (top row, left to right) the median background image, `Check frame` frame number with candidate (blue +; none here) and true (colored circles) spots plus the vial floor, and the mean vertical-position vs. time plots (darker segments indicate most linear section). If the test fails (for example no spots survive filtering), the reason is shown in a message box and the status bar. On the bottom row (left to right), there are plots for the distribution of spots' mass (line =  `minmass` value), distribution of spot signals (line = signal `threshold` value), and number of spots counted per frame (for entire video). 
 
 To make adjustments, modify the appropriate field(s) and `Test parameters`, or select a new video from `Browse...`. If the program freezes due to poor spot quality, press the `Reload video` button.
 
@@ -328,8 +324,7 @@ The remaining three videos represent how an improvised rig might perform, in ord
 |floor\_y | Integer | Vial floor in pixels from the top of the ROI (default: ROI bottom)|
 |background\_image | String | Optional image of the empty vials used as the background|
 |flies\_per\_vial | Integer or list | Flies loaded per vial, for failure to climb|
-|ftc\_height\_cm | Float | Failure-to-climb line above the floor, in cm (None = top of the ROI box)|
-|ftc\_window\_sec | Float | Failure-to-climb time limit in seconds (None = whole cropped video)|
+|ftc\_min\_coverage | Float | Fraction of the clip a non-climbing fly must be tracked to be scored as a failure to climb|
 |fng\_min\_range\_cm | Float | Smallest height range an FNG trace is rescaled by (see README)|
 
 See the README for the full list of FNG, failure-to-climb, linking and tortuosity keys.
