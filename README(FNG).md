@@ -7,10 +7,12 @@ This repository contains modifications to the [FreeClimber](https://github.com/a
 - Citation: Spierer, A. N. et al. (2020). *Journal of Experimental Biology*, 223, jeb229377.
 
 ## Modifications by
-- Jordan Vasu (2025)  
+- Jordan Vasu (2025–2026)  
+- Repository: https://github.com/jordanvasu/FreeClimber-FNG
 - Added functions for:
   - FNG detection (climb → fall events)
-  - Fall distance measurement -> This function takes the difference between a fall initiating and stopping. In this way, it can be considered the time between a _Drosophila_ falling and recovering from the fall.
+  - Fall measurements -> for each fall, the distance fallen (`drop_cm`, from the top of the climb to the bottom of the fall), the fall duration, and the recovery time until the _Drosophila_ starts to climb again (`recovery_duration_sec`).
+  - Individual-fly tracking and per-fly tortuosity metrics.
   - Failure to climb (FTC) -> a fly that never ascends past a height line within a time limit. This is a separate outcome from FNG: it is a failure to ascend, not a fall; a fly that climbs partway and then falls counts as a fall. The line defaults to the top of the drawn ROI box. See the "Failure to climb (FTC)" section of README.md.
   
 

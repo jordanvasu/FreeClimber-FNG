@@ -1,22 +1,30 @@
 # FreeClimber-FNG
 
-FreeClimber-FNG is a Python-based tool for automated detection of **Failed Negative Geotaxis (FNG)** events and calculation of fall distance in *Drosophila melanogaster* locomotor assays. It extends the [FreeClimber](https://github.com/adamspierer/FreeClimber) platform (Spierer et al., 2020) with new functionality for identifying climb-to-fall transitions and quantifying recovery distance.
+FreeClimber-FNG is a Python tool for video analysis of *Drosophila melanogaster* negative geotaxis (climbing) assays. Beyond the climbing velocity of the original [FreeClimber](https://github.com/adamspierer/FreeClimber) platform (Spierer et al., 2020), it measures three separate climbing outcomes:
 
-> **Note:** This repository is a fork of [adamspierer/FreeClimber](https://github.com/adamspierer/FreeClimber). The core particle detection and climbing velocity pipeline is the work of Adam N. Spierer and colleagues. FreeClimber-FNG adds FNG-specific detection on top of that foundation.
+- **Failed negative geotaxis (FNG)** — a fly climbs, then falls: fall events, fall distance, fall duration and recovery time
+- **Failure to climb (FTC)** — a fly never ascends past a line within a time limit
+- **Climbing quality** — per-fly tracks and how directly each fly climbs (tortuosity, straightness, vertical efficiency)
+
+> **Note:** This repository is a fork of [adamspierer/FreeClimber](https://github.com/adamspierer/FreeClimber). The core particle detection and climbing velocity pipeline is the work of Adam N. Spierer and colleagues. FreeClimber-FNG adds the analyses above on top of that foundation. Development happens only here, at [jordanvasu/FreeClimber-FNG](https://github.com/jordanvasu/FreeClimber-FNG).
+
+**Contents:** [What's new](#whats-new-in-freeclimber-fng) · [Installation](#installation) · [Usage](#usage) · [Output files](#output-files) · [Individual-fly tracking](#individual-fly-tracking-mode) · [FNG parameters](#fng-detection-parameters) · [Failure to climb](#failure-to-climb-ftc) · [Upgrade notes](#upgrade-notes-september-2026) · [Validation and tests](#synthetic-validation) · [Citing](#citing-this-work)
 
 ---
 
 ## What's New in FreeClimber-FNG
 
-The following capabilities were added by Jordan Vasu (2025):
+Added by Jordan Vasu (2025–2026):
 
-- **FNG detection** — automated identification of climb-to-fall transitions (failed negative geotaxis events) within climbing assay videos
-- **Fall distance measurement** — calculates the vertical distance between the position at fall initiation and the position at fall recovery; this metric captures the interval during which a fly falls and subsequently recovers, and can be interpreted as a proxy for fall severity
+- **FNG detection** — automated identification of climb-to-fall transitions (failed negative geotaxis events) in each vial
+- **Fall measurements** — for each fall: the distance fallen (`drop_cm`, from the top of the climb to the bottom of the fall), the fall duration, and the recovery time until the fly starts climbing again (`recovery_duration_sec`)
 - **Individual-fly tracking mode** — an optional mode that links per-frame detections into per-fly trajectories using [TrackPy](http://soft-matter.github.io/trackpy/) (including predictive linking), in addition to the default cohort (mean-position) analysis
-- **Per-fly tortuosity / meandering metrics** — when individual mode is enabled, computes path tortuosity, straightness, and mean turning angle per fly per climbing bout, quantifying how directly (or erratically) each fly climbs
-- **Failure to climb (FTC)** — a separate outcome from FNG: a fly that never ascends past a height line within a time limit, reported per vial (both modes) and per fly (individual mode) with its latency to reach the line. See [Failure to climb](#failure-to-climb-ftc).
+- **Per-fly tortuosity / meandering metrics** — in individual mode, tortuosity, straightness, vertical efficiency and mean turning angle per fly per climbing bout, quantifying how directly (or erratically) each fly climbs
+- **Failure to climb (FTC)** *(new, September 2026)* — a separate outcome from FNG: a fly that never passes a line (by default the top of the drawn ROI box) within a time limit, and never falls. Reported per vial in both modes, and per fly in individual mode with its time to reach the line. See [Failure to climb](#failure-to-climb-ftc).
+- **Per-folder `vials.txt`** — override the vial count, name the physical vials, and give the number of flies loaded per vial
+- **Reliability fixes** *(September 2026)* — step 6 no longer skips videos that have an empty vial or frame; FNG no longer counts jitter in non-climbing vials as falls; heights are measured from the vial floor; `.mov`/`.mp4` names are no longer truncated; the GUI reads the frame rate from the video and reports errors instead of closing. Some outputs change: see [Upgrade notes](#upgrade-notes-september-2026).
 
-These additions are implemented in `detector_fng.py` and are designed to integrate with the existing FreeClimber parameter configuration and batch processing workflow.
+All analyses are implemented in `scripts/detector_fng.py` (plus `scripts/tortuosity.py`) and use the standard FreeClimber configuration file and batch workflow.
 
 ---
 
@@ -24,18 +32,23 @@ These additions are implemented in `detector_fng.py` and are designed to integra
 
 FreeClimber-FNG uses the same environment and dependencies as the base FreeClimber platform. We recommend running in an Anaconda virtual environment.
 
-**1. Create and activate a Python 3.6 environment:**
+**1. Create and activate a Python 3.8 environment:**
 
 ```bash
-conda create -n freeclimber python=3.6 anaconda
+conda create -n freeclimber python=3.8
 conda activate freeclimber
 ```
 
 **2. Install dependencies:**
 
 ```bash
-pip install FreeClimber
+pip install numpy pandas scipy matplotlib trackpy ffmpeg-python wxPython
 ```
+
+FFmpeg itself must also be installed and on your `PATH` (for example
+`conda install -c conda-forge ffmpeg`). The current code is tested with Python
+3.8, pandas 2.0, NumPy 1.24, SciPy 1.10, matplotlib 3.7, trackpy 0.7 and
+wxPython 4.2.
 
 **3. Clone this repository:**
 
@@ -44,25 +57,37 @@ git clone https://github.com/jordanvasu/FreeClimber-FNG.git
 cd FreeClimber-FNG
 ```
 
-For full dependency details (FFmpeg, wxPython, trackpy, etc.), see the [FreeClimber installation guide](https://github.com/adamspierer/FreeClimber#installing).
+For more on FFmpeg and wxPython setup, see the original [FreeClimber installation guide](https://github.com/adamspierer/FreeClimber#installing).
 
 ---
 
 ## Usage
 
-FreeClimber-FNG can be run via GUI or command line, following the same conventions as the base platform. See [TUTORIAL.md](TUTORIAL.md) for step-by-step instructions on parameter configuration and batch processing (covers base FreeClimber workflow). FNG-specific detection is handled by `detector_fng.py` and is described in the [paper](paper.md).
+FreeClimber-FNG is run in two stages: set up the analysis on one video in the GUI, which saves a configuration (`.cfg`) file, then batch-process every video with that file from the command line. See [TUTORIAL.md](TUTORIAL.md) for a step-by-step walkthrough; FNG detection is described in the [paper](paper.md).
 
-**GUI:**
-
-```bash
-pythonw ./scripts/FreeClimber_gui.py --video_file ./example/<video_file.suffix>
-```
-
-**Command line:**
+**1. GUI — calibrate on one video and save a `.cfg`:**
 
 ```bash
-python FreeClimber_main.py --config_file ./example/example.cfg
+pythonw ./scripts/FreeClimber_gui.py --video_file ./example/w1118_m_2_1.mov
 ```
+
+Draw the region of interest (ROI) over the vials with its bottom edge at the
+vial floor and its top edge at the finish line, set the detection parameters,
+press **Test parameters** to check them, and press **Save configuration**. The
+GUI steps are: 1 video and units (the frame rate is read from the video), 2 ROI,
+3 spot detection, 4 frames and vials, 5 naming, 6 individual tracking and
+tortuosity, 7 failure to climb.
+
+**2. Command line — process every video in the project folder:**
+
+```bash
+python ./scripts/FreeClimber_main.py --config_file ./example/example.cfg --process_all
+```
+
+Other options: `--process_undone` (only videos without a `.slopes.csv`),
+`--process_custom <file>.prc` (a list of video paths), `--no_concat` (skip the
+project-level result files), `--optimization_plots` and `--debug` (stop at the
+first error with a full traceback).
 
 The batch runner walks `path_project` recursively and processes every file
 ending in `file_suffix` (matched case-insensitively, so `mov` finds both `.mov`
@@ -120,6 +145,28 @@ vial. It overrides the `.cfg` key `flies_per_vial` for that folder and is used b
 the [failure-to-climb](#failure-to-climb-ftc) measure. The GUI also applies a
 `vials.txt` beside the video when you press *Test parameters*, so the preview
 bins vials the same way the batch will.
+
+---
+
+## Output files
+
+Each video's outputs are written next to it, named `<video>.<suffix>`:
+
+| File | Written when | Contents |
+|---|---|---|
+| `.raw.csv` | always | every detected spot, with filter results and vial |
+| `.filtered.csv` | always | kept spots; `y` = height above the vial floor, in pixels |
+| `.fng.csv` | `fng_enabled` (default) | one row per FNG event: frames, `drop_cm`, fall duration, `recovery_duration_sec` |
+| `.ftc.csv` | `ftc_enabled` (default) | failure to climb per vial |
+| `.slopes.csv` | always | climbing velocity per vial (local linear regression) |
+| `.diagnostic.png` | always | frames, spots and mean height over time |
+| `.tracks.csv` | individual mode | per-fly tracks (`particle` column) |
+| `.ftc_particle.csv` | individual mode | one row per fly: outcome, max height, time to the line, falls |
+| `.tortuosity_bouts.csv`, `.tortuosity_particle.csv` | individual mode + `tortuosity_enabled` | per-bout and per-fly path metrics |
+| `.ROI.png`, `.spot_check.png`, `.processed.png` | `--optimization_plots` or GUI | detection check plots |
+
+The project-level `results.csv`, `fng_results.csv` and `ftc_results.csv` are
+described under [Usage](#usage).
 
 ---
 
@@ -299,9 +346,11 @@ dashes) on the check-frame panel so both can be checked by eye.
 
 ---
 
-## Upgrade notes (this version)
+## Upgrade notes (September 2026)
 
-These fixes change some existing outputs:
+The failure-to-climb update also fixed several bugs. These fixes change some
+existing outputs, so results from before and after the update should not be
+pooled without checking:
 
 - **Heights are measured from the vial floor.** `y` in `*.filtered.csv` and
   `*.tracks.csv` is now height above `floor_y` (default: the ROI bottom). It
@@ -327,10 +376,14 @@ These fixes change some existing outputs:
 
 | File/Folder | Description |
 |---|---|
-| `scripts/detector_fng.py` | Core detection, FNG and failure-to-climb logic (FreeClimber-FNG additions) |
+| `scripts/detector_fng.py` | Core detection, FNG and failure-to-climb logic |
 | `scripts/tortuosity.py` | Per-fly tortuosity metrics |
-| `scripts/` | GUI and command line interface wrappers |
-| `example/` | Example video and configuration files |
+| `scripts/FreeClimber_gui.py` | GUI for calibrating on one video and saving a `.cfg` |
+| `scripts/FreeClimber_main.py` | Command-line batch processing |
+| `scripts/gather_files.py` | Builds a `.prc` list of videos for `--process_custom` |
+| `example/`, `example_other/` | Example videos and configuration files |
+| `tests/` | Regression tests and synthetic validation data |
+| `dashboard/` | Exploratory plotting scripts for the outputs |
 | `paper.md` | JOSS manuscript |
 | `TUTORIAL.md` | Usage walkthrough |
 
@@ -352,18 +405,18 @@ All synthetic validation assets live under `tests/fixtures/synthetic_validation/
 
 The regression test (`tests/test_fng_bounds_and_detection.py`) loads the raw CSV, runs the FNG detection pipeline, and asserts that exactly 5 events are detected with peak frames within ±5 frames of ground truth and no impossible (out-of-bounds) frame indices.
 
-**Run the regression test:**
+**Run the tests:**
 
 ```bash
-pip install pytest numpy pandas scipy
-pytest tests/test_fng_bounds_and_detection.py -v
+pip install pytest
+pytest tests -v
 ```
 
-No video decoding or FFmpeg is required — the test operates on the pre-computed raw CSV.
-
-The full suite (`pytest tests`) also covers linking, tortuosity, the
-`vials.txt` sidecar, failure to climb (`tests/test_ftc.py`) and the audit bug
-fixes (`tests/test_bugfixes.py`); it needs `trackpy` and `matplotlib` as well.
+No video decoding or FFmpeg is required — the tests use pre-computed CSVs and
+synthetic tracks. Besides the FNG regression test, the suite (60 tests) covers
+linking, tortuosity, the `vials.txt` sidecar, failure to climb
+(`tests/test_ftc.py`) and the September 2026 bug fixes
+(`tests/test_bugfixes.py`).
 
 ---
 
