@@ -200,11 +200,8 @@ class main_gui(wx.Frame):
 
         ## Failure to climb (Step 7 row) and the vial floor
         variables.append('ftc_enabled=True')
-        ## Blank line height -> None -> the line is the top of the drawn ROI box
-        variables.append('ftc_height_cm=%s' % self._number_or_none(self.input_ftc_height_cm))
-        variables.append('ftc_window_sec=%s' % self._number_or_none(self.input_ftc_window_sec))
         variables.append('ftc_eval_frames=5')
-        variables.append('ftc_min_coverage=0.8')
+        variables.append('ftc_min_coverage=0.5')
         variables.append('flies_per_vial=%s' % self._flies_per_vial())
         floor = self._number_or_none(self.input_floor_y)
         if floor is not None:
@@ -876,54 +873,36 @@ class main_gui(wx.Frame):
               size=wx.Size(350,22), style=0, value='') 
 
 
-        ## Step 7: failure to climb (and the vial floor it is measured from)
+        ## Step 7: failure to climb. Judged per fly over the whole clip
+        ## (individual mode), so there is no line or time limit to set.
         row7 = 210
         self.text_step_7 = wx.StaticText(id=wx.ID_ANY,
               label=u'Step 7: Failure to climb', name='text_step_7', parent=self.panel1,
               pos=wx.Point(col1, row7 + 3), size=wx.Size(150, 22), style=0)
-        self.text_ftc_height_cm = wx.StaticText(id=wx.ID_ANY,
-              label=u'Line (cm):', name='text_ftc_height_cm', parent=self.panel1,
-              pos=wx.Point(165, row7 + 3), size=wx.Size(60, 22), style=0)
-        self.input_ftc_height_cm = wx.TextCtrl(id=wx.ID_ANY,
-              name=u'input_ftc_height_cm', parent=self.panel1, pos=wx.Point(228, row7),
-              size=wx.Size(small_box_dimensions), style=0, value=u'')
-        self.input_ftc_height_cm.SetToolTip(
-              'A fly that never gets this high above the vial floor within the time '
-              'limit (and never falls) failed to climb. Blank = the top of the drawn '
-              'ROI box.')
-        self.text_ftc_window_sec = wx.StaticText(id=wx.ID_ANY,
-              label=u'Within (s):', name='text_ftc_window_sec', parent=self.panel1,
-              pos=wx.Point(275, row7 + 3), size=wx.Size(62, 22), style=0)
-        self.input_ftc_window_sec = wx.TextCtrl(id=wx.ID_ANY,
-              name=u'input_ftc_window_sec', parent=self.panel1, pos=wx.Point(340, row7),
-              size=wx.Size(small_box_dimensions), style=0, value=u'')
-        self.input_ftc_window_sec.SetToolTip(
-              'Time limit in seconds from the start of the cropped video. '
-              'Blank = the whole cropped video.')
         self.text_flies_per_vial = wx.StaticText(id=wx.ID_ANY,
               label=u'Flies / vial:', name='text_flies_per_vial', parent=self.panel1,
-              pos=wx.Point(390, row7 + 3), size=wx.Size(65, 22), style=0)
+              pos=wx.Point(165, row7 + 3), size=wx.Size(65, 22), style=0)
         self.input_flies_per_vial = wx.TextCtrl(id=wx.ID_ANY,
-              name=u'input_flies_per_vial', parent=self.panel1, pos=wx.Point(458, row7),
+              name=u'input_flies_per_vial', parent=self.panel1, pos=wx.Point(233, row7),
               size=wx.Size(90, 22), style=0, value=u'')
         self.input_flies_per_vial.SetToolTip(
               'Flies loaded per vial: one number for all vials, or a comma-separated '
-              'list left to right (e.g. 10,10,9). Lets flies the detector cannot see '
-              'still count. Blank = count detected flies only. A vials.txt "n =" line '
-              'overrides this per folder.')
+              'list left to right (e.g. 10,10,9). Flies the detector never sees moving '
+              'then count as failures. Blank = count tracked flies only. A vials.txt '
+              '"n =" line overrides this per folder.')
         self.text_floor_y = wx.StaticText(id=wx.ID_ANY,
               label=u'Vial floor y (px):', name='text_floor_y', parent=self.panel1,
-              pos=wx.Point(560, row7 + 3), size=wx.Size(95, 22), style=0)
+              pos=wx.Point(340, row7 + 3), size=wx.Size(95, 22), style=0)
         self.input_floor_y = wx.TextCtrl(id=wx.ID_ANY,
-              name=u'input_floor_y', parent=self.panel1, pos=wx.Point(658, row7),
+              name=u'input_floor_y', parent=self.panel1, pos=wx.Point(438, row7),
               size=wx.Size(medium_box_dimensions), style=0, value=u'')
         self.input_floor_y.SetToolTip(
               'Image y-coordinate of the vial floor, as read off the video axes. '
-              'Heights are measured from here. Blank = bottom edge of the ROI.')
+              'Reported heights are measured from here. Blank = bottom edge of the ROI.')
         self.text_ftc_hint = wx.StaticText(id=wx.ID_ANY,
-              label=u'(Test parameters draws the floor and line on the check frame)',
+              label=u'(Each fly is judged over the whole clip; needs Individual mode in Step 6)',
               name='text_ftc_hint', parent=self.panel1,
-              pos=wx.Point(715, row7 + 3), size=wx.Size(230, 30), style=0)
+              pos=wx.Point(500, row7 + 3), size=wx.Size(440, 22), style=0)
 
         ## Bottom panels
         self.text_video_path = wx.StaticText(id=wxID_video_path,
