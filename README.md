@@ -23,6 +23,7 @@ Added by Jordan Vasu (2025–2026):
 - **Failure to climb (FTC)** *(new, September 2026)* — a separate outcome from FNG: a fly that makes no climbing movement and never falls during the clip, judged per fly from its own track (individual mode). Reported per fly with its time to first climb, and per vial as a count and fraction. See [Failure to climb](#failure-to-climb-ftc).
 - **Per-folder `vials.txt`** — override the vial count, name the physical vials, and give the number of flies loaded per vial
 - **Reliability fixes** *(September 2026)* — step 6 no longer skips videos that have an empty vial or frame; FNG no longer counts jitter in non-climbing vials as falls; heights are measured from the vial floor; `.mov`/`.mp4` names are no longer truncated; the GUI reads the frame rate from the video and reports errors instead of closing. Some outputs change: see [Upgrade notes](#upgrade-notes-september-2026).
+- **Slope unit fix** *(November 2026)* — with `convert_to_cm_sec=True`, slopes are now in cm/s. They were scaled by the wrong factor before. See [Upgrade notes](#upgrade-notes-november-2026).
 
 All analyses are implemented in `scripts/detector_fng.py` (plus `scripts/tortuosity.py`) and use the standard FreeClimber configuration file and batch workflow.
 
@@ -328,6 +329,21 @@ draws the floor as a cyan line on the check-frame panel.
    flies seen at the peak are still detected at the end, which usually means
    flies are being lost to background subtraction. `more_tracks_than_expected`
    means one fly was split into several tracks.
+
+---
+
+## Upgrade notes (November 2026)
+
+- **Slopes in cm/s were wrong.** With `convert_to_cm_sec=True`, the slope in
+  pixels/frame was multiplied by `pixel_to_cm / frame_rate`. `pixel_to_cm` is
+  pixels per cm (as in the GUI, `drop_cm` and the plots), so cm/s needs
+  `frame_rate / pixel_to_cm`. Old cm/s slopes are too large or too small by a
+  factor of `(pixel_to_cm / frame_rate)²`. Example: at 61 px/cm and 25 fps, a
+  fly climbing 2.33 cm/s was reported as 13.84 cm/s.
+  - The slope column in `*.slopes.csv` and `results.csv` changes. FNG,
+    tortuosity, FTC and slopes with `convert_to_cm_sec=False` do not change.
+  - To correct an old cm/s slope without a re-run, multiply it by
+    `(frame_rate / pixel_to_cm)²`, using the values from that video's `.cfg`.
 
 ---
 

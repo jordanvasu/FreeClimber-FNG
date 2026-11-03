@@ -141,8 +141,8 @@ class detector(object):
         ## Setting a color map
         self.vial_color_map = cm.jet
         
-        ## Create a conversion factor
-        if self.convert_to_cm_sec: self.conversion_factor = self.pixel_to_cm / self.frame_rate
+        ## Create a conversion factor: px/frame * (frames/s) / (px/cm) = cm/s
+        if self.convert_to_cm_sec: self.conversion_factor = self.frame_rate / self.pixel_to_cm
         else: self.conversion_factor = 1
 
         print('')
